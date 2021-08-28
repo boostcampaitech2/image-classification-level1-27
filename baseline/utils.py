@@ -15,7 +15,7 @@ def denormalize_image(image, mean, std):
         img_cp = np.clip(img_cp, 0, 255).astype(np.uint8)
         return img_cp
 
-def get_f1_score(gt, pr):
+def get_f1_score(gt, pr, verbose=False):
     m_gt, g_gt, a_gt = label_decoder(gt)
     m_pr, g_pr, a_pr = label_decoder(pr)
     
@@ -41,4 +41,11 @@ def get_f1_score(gt, pr):
         score['age'].append(f1_score(tmp_gt, tmp_pr, average='macro'))
 
     score['total'] = f1_score(gt, pr, average='macro')
+    if verbose:
+        print(f"===========f1_score===========")
+        print(f"label\t  0\t  1\t  2")
+        print(f"mask\t{score['mask'][0]:.4}\t{score['mask'][1]:.4}\t{score['mask'][2]:.4}")
+        print(f"gender\t{score['gender'][0]:.4}\t{score['gender'][1]:.4}")
+        print(f"age\t{score['age'][0]:.4}\t{score['age'][1]:.4}\t{score['age'][2]:.4}")
+        print(f"============{score['total']:.4}============")
     return score      

@@ -229,7 +229,10 @@ def train(data_dir, model_dir, args):
             model.eval()
             val_loss_items = []
             val_acc_items = []
+            val_predicts = torch.empty(0)
+            val_targets = torch.empty(0)
             figure = None
+
             for val_batch in val_loader:
                 inputs, labels = val_batch
                 inputs = inputs.to(device)
@@ -237,14 +240,16 @@ def train(data_dir, model_dir, args):
                 g_labels = labels['gender'].to(device)
                 a_labels = labels['age'].to(device)
 
+                ### update val_predicts & val_targets
                 m_outs, g_outs, a_outs = model(inputs)
                 m_preds = torch.argmax(m_outs, dim=-1).cpu()
                 g_preds = (g_outs>0).squeeze().cpu()
                 a_preds = torch.argmax(a_outs, dim=-1).cpu()
                 preds = label_encoder(m_preds, g_preds, a_preds)
                 labels = label_encoder(m_labels.cpu(), g_labels.cpu().squeeze(), a_labels.cpu())
+                val_predicts = torch.cat((val_predicts,preds))
+                val_targets = torch.cat((val_targets,labels))
 
-                m_outs, g_outs, a_outs = model(inputs)
                 m_loss = criterion_mask(m_outs, m_labels).item()
                 g_loss = criterion_gender(g_outs, g_labels).item()
                 a_loss = criterion_age(a_outs, a_labels).item()
@@ -272,8 +277,13 @@ def train(data_dir, model_dir, args):
                 f"[Val] acc : {val_acc:4.2%}, loss: {val_loss:4.2} || "
                 f"best acc : {best_val_acc:4.2%}, best loss: {best_val_loss:4.2}"
             )
+
+            ### print f1_score
+            score = get_f1_score(val_targets, val_predicts, verbose=True)
+
             logger.add_scalar("Val/loss", val_loss, epoch)
             logger.add_scalar("Val/accuracy", val_acc, epoch)
+            logger.add_scalar("Val/f1_score", score['total'], epoch)
             logger.add_figure("results", figure, epoch)
             print()
 
