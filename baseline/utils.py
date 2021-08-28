@@ -20,25 +20,15 @@ def get_f1_score(gt, pr, verbose=False):
     m_pr, g_pr, a_pr = label_decoder(pr)
     
     score = dict()
-    score['mask'] = [] 
+    score['mask'], score['age'],score['gender'] = [], [], []
     for i in range(3):
-        tmp_gt = (m_gt==i)
-        tmp_pr = (m_pr==i)
-        score['mask'].append(f1_score(tmp_gt, tmp_pr, average='macro'))
-    
-    
-    score['gender'] = [] 
-    for i in range(2):
-        tmp_gt = (g_gt==i)
-        tmp_pr = (g_pr==i)
-        score['gender'].append(f1_score(tmp_gt, tmp_pr, average='macro'))
-
-    
-    score['age'] = [] 
-    for i in range(3):
-        tmp_gt = (a_gt==i)
-        tmp_pr = (a_pr==i)
-        score['age'].append(f1_score(tmp_gt, tmp_pr, average='macro'))
+        if i<3 :
+            gender_gt, gender_pr = (g_gt==i), (g_pr==i)
+            score['gender'].append(f1_score(gender_gt, gender_pr, average='macro'))
+        mask_gt, mask_pr = (m_gt==i), (m_pr==i)
+        age_gt, age_pr = (a_gt==i), (a_pr==i)
+        score['age'].append(f1_score(age_gt, age_pr, average='macro'))
+        score['mask'].append(f1_score(mask_gt, mask_pr, average='macro'))
 
     score['total'] = f1_score(gt, pr, average='macro')
     if verbose:
