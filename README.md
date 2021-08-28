@@ -1,7 +1,6 @@
 # image-classification-level1-27
 
 ## Main Branch
-- 작성자 : 김인재 [Contact](k.now9041@gmail.com)
 - 최고 F1-score 성능 : 약 6.9
 - ResNet Pre-Trained Model 
 
