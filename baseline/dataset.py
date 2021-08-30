@@ -423,3 +423,123 @@ class CustomDataset(Dataset):
 
     def set_transform(self, transform):
         self.transform = transform
+
+
+
+class MaskGenderDataset(Dataset):
+    def __init__(self, args, train=True, k_index=2):
+        super().__init__()
+        self.data_dir = args.data_dir
+        self.info_path = args.info_path
+        self.k = args.n_splits
+        self.seed = args.seed
+        self.k_index= k_index
+        self.train = train
+
+        self.folders = None
+        self.set_k_fold(self.info_path, k_index=self.k_index, k=self.k, seed=self.seed)
+
+        self.input_files = []
+        self.images = []
+        self.masks = []
+        self.genders = []
+        self.ages = []
+        self.labels = []
+
+        self.num_classes = None
+
+        ### prepare images and labels
+        for directory in self.folders:
+            image_dir = os.path.join(self.data_dir, directory)
+            ID, GENDER, RACE, real_AGE = directory.split('_')
+
+            if self.train:
+                if GENDER == "male":
+                    GENDER = 0.95
+                elif GENDER =="female":
+                    GENDER = 0.05
+
+                if ID in ['006359', '006360', '006361', '006362', '006363', '006364', '001498-1', '004432']:
+                    GENDER = 0.05 if GENDER==0.95 else 0.95
+                elif ID in ['003724', '003421', '003399', '001200', '005223', '001270', '006226', '000664']:
+                    GENDER = 0.5
+            
+            else:
+                if GENDER == "male":
+                    GENDER = 1
+                elif GENDER =="female":
+                    GENDER = 0
+
+            if int(real_AGE) < 30:
+                AGE = 0
+            elif int(real_AGE) < 60:
+                AGE = 1
+            else:
+                AGE = 2
+        
+            file_list = [f for f in os.listdir(image_dir) if f[0] != '.']
+            for file in file_list:
+                self.input_files.append(os.path.join(image_dir, file))
+                
+                if file[0:4] == "mask":
+                    MASK = 0
+                elif file[0:9] == "incorrect":
+                    MASK = 1
+                elif file[0:6] == "normal":
+                    MASK = 2
+                else:
+                    raise
+
+                self.images.append(np.array(Image.open(os.path.join(image_dir, file))))    
+                self.masks.append(MASK)
+                self.genders.append(GENDER)
+                self.ages.append(AGE)
+                self.labels.append(MASK*6 + GENDER*3 + AGE)
+                                        
+                    
+    def __len__(self):
+        return len(self.labels)
+    
+    
+    def __getitem__(self, idx):
+        ### load image
+        image = self.images[idx]
+        if self.transform:
+            image = self.transform(image=image)['image']
+        image.type(torch.float32)
+        
+        ### load label
+        label = dict()
+        label['mask'] = torch.tensor(self.masks[idx], dtype=torch.long)
+        label['gender'] = torch.tensor([self.genders[idx]], dtype=torch.float32)  ### BCE loss를 쓰기위해 한번더 감싸준다.
+    
+        
+        return image, label
+
+
+    def set_k_fold(self, info_path, k_index=2, k=5, seed=1997):
+        """
+            output: train_folder, valid_folder
+        """
+
+        if not k_index in range(k):
+            raise Exception('n_splits에 맞는 index를 입력해주세요')
+
+        train_info = pd.read_csv(info_path)
+
+        ### age/gender 동일 비율로 K Fold진행
+        new_age = np.array(train_info['age'])
+        for i in range(7):
+            new_age[(new_age >= i*10) & (new_age < (i+1)*10)] = i
+        new_gender = np.array(train_info['gender'])
+        str_for_split = new_age.astype(str)+new_gender
+
+        SFK = StratifiedKFold(n_splits=k, shuffle=True, random_state=seed)
+        for idx, (train_index, valid_index) in enumerate(SFK.split(train_info, str_for_split)):
+            if idx == k_index:
+                self.folders = train_info['path'][train_index] if self.train else train_info['path'][valid_index]
+                break
+
+
+    def set_transform(self, transform):
+        self.transform = transform
