@@ -1,5 +1,6 @@
 import numpy as np
 from sklearn.metrics import f1_score
+import os
 
 def label_encoder(m_labels, g_labels, a_labels):
     return m_labels*6+ g_labels*3+ a_labels
@@ -39,3 +40,13 @@ def get_f1_score(gt, pr, verbose=False):
         print(f"age\t{score['age'][0]:.4}\t{score['age'][1]:.4}\t{score['age'][2]:.4}")
         print(f"============{score['total']:.4}============")
     return score      
+
+ 
+def createFolder(directory):
+    try:
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+    except OSError:
+        print ('Error: Creating directory. ' +  directory)
+ 
+
