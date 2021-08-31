@@ -400,7 +400,6 @@ class CustomDataset(Dataset):
         
         return image, label
 
-
     def set_k_fold(self, info_path, k_index=2, k=5, seed=1997):
         """
             output: train_folder, valid_folder
@@ -424,6 +423,26 @@ class CustomDataset(Dataset):
                 self.folders = train_info['path'][train_index] if self.train else train_info['path'][valid_index]
                 break
 
+    def set_transform(self, transform):
+        self.transform = transform
+
+class CustomTestDataset(Dataset):
+    def __init__(self, data_path, train=False):
+        super(CustomTestDataset, self).__init__()
+        self.data_dir = data_path
+        self.train = train   
+                    
+    def __len__(self):
+        return len(self.data_dir)
+    
+    def __getitem__(self, idx):
+        ### load image
+        image = np.array(Image.open(self.data_dir[idx]))
+        if self.transform:
+            image = self.transform(image=image)['image']
+        image.type(torch.float32)
+        
+        return image
 
     def set_transform(self, transform):
         self.transform = transform
