@@ -3,7 +3,7 @@ import random
 from collections import defaultdict
 from enum import Enum
 from typing import Tuple, List
-
+from tqdm import tqdm
 import numpy as np
 import pandas as pd
 import torch
@@ -340,7 +340,11 @@ class CustomDataset(Dataset):
         self.num_classes = None
 
         ### prepare images and labels
-        for directory in self.folders:
+        if train:
+            print("Train Data Loading...")
+        else:
+            print("Test Data Loading...")
+        for directory in tqdm(self.folders):
             image_dir = os.path.join(self.data_dir, directory)
             ID, GENDER, RACE, real_AGE = directory.split('_')
 

@@ -84,6 +84,9 @@ def increment_path(path, exist_ok=False):
 
 
 def train(data_dir, model_dir, args):
+    #create model dir
+    createFolder(model_dir)
+
     seed_everything(args.seed)
 
     save_dir = increment_path(os.path.join(model_dir, args.name))
@@ -131,7 +134,7 @@ def train(data_dir, model_dir, args):
     train_loader = DataLoader(
         train_set,
         batch_size=args.batch_size,
-        num_workers=multiprocessing.cpu_count()//2,
+        num_workers=multiprocessing.cpu_count()//3,
         shuffle=True,
         pin_memory=use_cuda,
         drop_last=True,
@@ -140,7 +143,7 @@ def train(data_dir, model_dir, args):
     val_loader = DataLoader(
         val_set,
         batch_size=args.valid_batch_size,
-        num_workers=multiprocessing.cpu_count()//2,
+        num_workers=multiprocessing.cpu_count()//3,
         shuffle=False,
         pin_memory=use_cuda,
         drop_last=True,
@@ -320,7 +323,7 @@ if __name__ == '__main__':
 
     # Container environment
     parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/images'))
-    parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_MODEL_DIR', './model'))
+    parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_MODEL_DIR', '/opt/ml/model'))
     parser.add_argument('--info_path', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/train.csv'))
 
     args = parser.parse_args()
