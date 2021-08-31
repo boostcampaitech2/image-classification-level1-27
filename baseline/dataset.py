@@ -353,6 +353,10 @@ class CustomDataset(Dataset):
             elif GENDER =="female":
                 GENDER = 1
 
+            # fix gender label error
+            if ID in ['006359', '006360', '006361', '006362', '006363', '006364', '001498-1', '004432']:
+                GENDER = 0 if GENDER==1 else 1
+
             if int(real_AGE) < 30:
                 AGE = 0
             elif int(real_AGE) < 60:
@@ -412,8 +416,6 @@ class CustomDataset(Dataset):
 
         ### age/gender 동일 비율로 K Fold진행
         new_age = np.array(train_info['age'])
-        for i in range(7):
-            new_age[(new_age >= i*10) & (new_age < (i+1)*10)] = i
         new_gender = np.array(train_info['gender'])
         str_for_split = new_age.astype(str)+new_gender
 
