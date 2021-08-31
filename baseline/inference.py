@@ -32,11 +32,26 @@ def inference(data_dir, model_dir, output_dir, args):
     info_path = os.path.join(data_dir, 'info.csv')
     info = pd.read_csv(info_path)
     img_paths = [os.path.join(img_root, img_id) for img_id in info.ImageID]
-    dataset = TestDataset(img_paths, args.resize)
-    loader = torch.utils.data.DataLoader(
-        dataset,
+
+    #dataset
+    dataset_module = getattr(import_module("dataset"), args.dataset)
+    
+    test_set = dataset_module(
+        data_path = img_paths,
+        train=False)
+
+    transform_module = getattr(import_module("transform"), args.augmentation)  # default: BaseAugmentation
+
+    test_transform = transform_module(
+        train=False
+    )
+      
+    test_set.set_transform(test_transform)
+
+    loader = DataLoader(
+        test_set,
         batch_size=args.batch_size,
-        num_workers=multiprocessing.cpu_count()//3,
+        num_workers=multiprocessing.cpu_count()//2,
         shuffle=False,
         pin_memory=use_cuda,
         drop_last=False,
@@ -67,9 +82,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # Data and model checkpoints directories
+    parser.add_argument('--dataset', type=str, default='CustomTestDataset', help='dataset augmentation type (default: CustomDataset)')
     parser.add_argument('--batch_size', type=int, default=16, help='input batch size for validing (default: 1000)')
     parser.add_argument('--model', type=str, default='CustomModel', help='model type (default: BaseModel)')
     parser.add_argument('--resize', type=tuple, default=(512, 384), help='resize size for image when you trained (default: (96, 128))')
+    parser.add_argument('--augmentation', type=str, default='BaseAugmentation', help='data augmentation type (default: BaseAugmentation)')    
     # Container environment
     parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_EVAL', '/opt/ml/input/data/eval'))
     parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_CHANNEL_MODEL', '/opt/ml/model/exp8'))  # modified by ihyun
