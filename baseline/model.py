@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
-
+from efficientnet_pytorch import EfficientNet
 
 
 class BaseModel(nn.Module):
@@ -45,6 +45,34 @@ class CustomModel(nn.Module):
 
         ### fc layer 변경
         self.backbone.fc = nn.Identity()
+        self.mask_fc = nn.Linear(in_features, 3)
+        self.gender_fc = nn.Linear(in_features, 1)
+        self.age_fc = nn.Linear(in_features, 3)
+        """
+        1. 위와 같이 생성자의 parameter 에 num_claases 를 포함해주세요.
+        2. 나만의 모델 아키텍쳐를 디자인 해봅니다.
+        3. 모델의 output_dimension 은 num_classes 로 설정해주세요.
+        """
+        self.num_classes = None
+
+    def forward(self, x):
+        x = self.backbone(x)
+        mask_output = self.mask_fc(x)
+        gender_output = self.gender_fc(x)
+        age_output = self.age_fc(x)
+        """
+        1. 위에서 정의한 모델 아키텍쳐를 forward propagation 을 진행해주세요
+        2. 결과로 나온 output 을 return 해주세요
+        """
+        return mask_output, gender_output, age_output
+
+
+class CustomModel_E(nn.Module):
+    def __init__(self, pretrained=True):
+        super().__init__()
+        self.backbone = EfficientNet.from_pretrained('efficientnet-b3')
+        in_features = self.backbone._fc.in_features
+        self.backbone._fc = nn.Identity()
         self.mask_fc = nn.Linear(in_features, 3)
         self.gender_fc = nn.Linear(in_features, 1)
         self.age_fc = nn.Linear(in_features, 3)
