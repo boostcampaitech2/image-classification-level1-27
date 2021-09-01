@@ -1,6 +1,9 @@
+from re import A
 import numpy as np
 from sklearn.metrics import f1_score
 import os
+import torch
+from torch import nn
 
 def label_encoder(m_labels, g_labels, a_labels):
     return m_labels*6+ g_labels*3+ a_labels
@@ -50,3 +53,39 @@ def createFolder(directory):
         print ('Error: Creating directory. ' +  directory)
  
 
+
+def tta(tta_transforms, model, inputs):
+    m_out_list = [[],[],[]]
+    g_out_list = []
+    a_out_list = [[],[],[]]
+    for transformer in tta_transforms: # custom transforms or e.g. tta.aliases.d4_transform() 
+                    # augment image
+        augmented_image = transformer.augment_image(inputs)
+        m, g, a = model(augmented_image)
+                    
+        m_tensor = nn.functional.softmax(m).cpu()[0]
+        g_tensor = torch.sigmoid(g).cpu()[0]
+        a_tensor = nn.functional.softmax(a).cpu()[0]
+                    # save results
+        m_out_list[0].append(m_tensor[0])
+        m_out_list[1].append(m_tensor[1])
+        m_out_list[2].append(m_tensor[2])
+        g_out_list.append(g_tensor)
+        a_out_list[0].append(a_tensor[0])
+        a_out_list[1].append(a_tensor[1])
+        a_out_list[2].append(a_tensor[2])
+                    
+                # reduce results as you want, e.g mean/max/min
+
+        m1_result = torch.mean(torch.tensor(m_out_list[0]))
+        m2_result = torch.mean(torch.tensor(m_out_list[1]))
+        m3_result = torch.mean(torch.tensor(m_out_list[2]))
+        a1_result = torch.mean(torch.tensor(a_out_list[0]))
+        a2_result = torch.mean(torch.tensor(a_out_list[1]))
+        a3_result = torch.mean(torch.tensor(a_out_list[2]))
+        g_result = torch.mean(torch.tensor(g_out_list))
+
+        m_outs = torch.tensor([m1_result, m2_result, m3_result])
+        a_outs = torch.tensor([a1_result, a2_result, a3_result])
+
+        return m_outs, torch.tensor(g_result).cpu(), a_outs

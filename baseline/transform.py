@@ -1,5 +1,6 @@
 from albumentations import *
 from albumentations.pytorch import ToTensorV2
+import ttach as tta
 
 class BaseAugmentation:
     def __init__(self, train=True, mean=(0.548, 0.504, 0.479), std=(0.237, 0.247, 0.246)):
@@ -7,7 +8,7 @@ class BaseAugmentation:
         self.std = (0.237, 0.247, 0.246)
         if train:
             self.transform = Compose([#CenterCrop(384,384),
-                                    Resize(512,384),
+                                    Resize(384,288),
                                     ShiftScaleRotate(rotate_limit=20,shift_limit=0.02, p=0.5), 
                                     HorizontalFlip(p=0.5),
                                     OneOf([Blur(blur_limit=3, p=1),
@@ -19,7 +20,7 @@ class BaseAugmentation:
                                     ])
         else:
             self.transform = Compose([#CenterCrop(384,384),
-                            Resize(512,384),
+                            Resize(384,288),
                             Normalize([0.485, 0.456, 0.406],
                                     [0.229, 0.224, 0.225]),
                             ToTensorV2(),
@@ -60,3 +61,14 @@ class Augmentation_384:
                             ])
     def __call__(self, image):
         return self.transform(image=image)
+    
+def get_tta_transform():
+    transforms = tta.Compose(
+    [
+        tta.HorizontalFlip(),
+        tta.Rotate90(angles=[0, 180]),
+        tta.Scale(scales=[1, 2, 4]),
+        tta.Multiply(factors=[0.9, 1, 1.1]),        
+    ])
+
+    return transforms

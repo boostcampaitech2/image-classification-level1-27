@@ -9,7 +9,7 @@ import torch.nn as nn
 
 from dataset import MaskBaseDataset
 from tqdm import tqdm
-
+from transform import get_tta_transform
 from utils import *
 
 
@@ -17,7 +17,7 @@ def load_model(saved_model, device):
     model_module = getattr(import_module("model"), args.model)  # default: BaseModel
     model = model_module(
     ).to(device)
-    model_path = os.path.join(saved_model, 'best_acc.pth')
+    model_path = os.path.join(saved_model, 'best_score.pth')
     model.load_state_dict(torch.load(model_path, map_location=device))
 
     return model
@@ -25,6 +25,9 @@ def load_model(saved_model, device):
 
 @torch.no_grad()
 def inference(data_dir, model_dir, output_dir, args):
+    if args.tta :
+        args.batch_size = 1
+        tta_transforms = get_tta_transform()
     use_cuda = torch.cuda.is_available()
     device = torch.device("cuda" if use_cuda else "cpu")
     model = load_model(model_dir, device).to(device)
@@ -60,44 +63,23 @@ def inference(data_dir, model_dir, output_dir, args):
     )
 
     print("Calculating inference results..")
-    m_out_list = []
-    g_out_list = []
-    a_out_list = []
+    ans = []
     with torch.no_grad():
         for idx, images in enumerate(tqdm(loader)):
             images = images.to(device)
 
 
-            m_outs, g_outs, a_outs = model(images)
+            m_outs, g_outs, a_outs = tta(tta_transforms, model, images)
+
+            tta_m_preds = torch.unsqueeze(torch.argmax(m_outs, dim=-1),0).cpu()
+            tta_a_preds = torch.unsqueeze(torch.argmax(a_outs, dim=-1),0).cpu()
+            if g_outs >= 0.5 : tta_g_preds = 1
+            else: tta_g_preds= 0
+            tta_g_preds = torch.unsqueeze(torch.tensor(tta_g_preds),0).cpu()
+            tta_preds = label_encoder(tta_m_preds, tta_g_preds, tta_a_preds)
+            ans.append(tta_preds[0].item())
             
-            m_outs = nn.functional.softmax(m_outs).cpu()
-            g_outs = torch.sigmoid(g_outs).cpu()
-            a_outs = nn.functional.softmax(a_outs).cpu()
-            
-            m_out_list += [m_outs]
-            g_out_list += [g_outs]
-            a_out_list += [a_outs]
-
-
-            
-            # out = out.argmax(dim=-1)
-        m_outs = torch.cat(m_out_list,0)
-        g_outs = torch.cat(g_out_list,0)
-        a_outs = torch.cat(a_out_list,0)
-
-        print(m_outs.shape)
-        print(g_outs.shape)
-        print(a_outs.shape)
-
-    info['m_out_0'] = m_outs[:, 0]
-    info['m_out_1'] = m_outs[:, 1]
-    info['m_out_2'] = m_outs[:, 2]
-    
-    info['g_out'] = g_outs[:,0]
-
-    info['a_out_0'] = a_outs[:, 0]
-    info['a_out_1'] = a_outs[:, 1]
-    info['a_out_2'] = a_outs[:, 2]
+    info['ans'] = ans
     info.to_csv(os.path.join(output_dir, f'output.csv'), index=False)
     print(f'Inference Done!')
 
@@ -107,6 +89,7 @@ if __name__ == '__main__':
 
     # Data and model checkpoints directories
     parser.add_argument('--dataset', type=str, default='CustomTestDataset', help='dataset augmentation type (default: CustomDataset)')
+    parser.add_argument('--tta', type=bool, default=False, help='dataset augmentation type (default: CustomDataset)')
     parser.add_argument('--batch_size', type=int, default=16, help='input batch size for validing (default: 1000)')
     parser.add_argument('--model', type=str, default='CustomModel', help='model type (default: BaseModel)')
     parser.add_argument('--resize', type=tuple, default=(512, 384), help='resize size for image when you trained (default: (96, 128))')

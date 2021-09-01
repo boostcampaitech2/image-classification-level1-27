@@ -65,3 +65,5 @@ class CustomModel(nn.Module):
         2. 결과로 나온 output 을 return 해주세요
         """
         return mask_output, gender_output, age_output
+
+

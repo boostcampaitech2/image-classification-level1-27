@@ -9,7 +9,7 @@ import random
 import re
 from importlib import import_module
 from pathlib import Path
-
+import ttach as tta
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -17,10 +17,13 @@ from torch import optim
 from torch.optim.lr_scheduler import *
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-
+from torch import nn
 from dataset import MaskBaseDataset
 from loss import create_criterion
 from utils import *
+from transform import get_tta_transform
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning) 
 
 def seed_everything(seed):
     torch.manual_seed(seed)
@@ -32,13 +35,17 @@ def seed_everything(seed):
     random.seed(seed)
 
 
+
 def get_lr(optimizer):
     for param_group in optimizer.param_groups:
         return param_group['lr']
 
 
 def grid_image(np_images, gts, preds, n=16, shuffle=False):
+    if args.valid_batch_size == 1:
+        preds = preds[0]
     batch_size = np_images.shape[0]
+    print(n, batch_size)
     assert n <= batch_size
 
     choices = random.sample(range(batch_size), k=n) if shuffle else list(range(n))
@@ -87,6 +94,13 @@ def increment_path(path, exist_ok=False):
 
 
 def train(data_dir, model_dir, args):
+    ##init TTA
+    if args.tta:
+        tta_transforms = get_tta_transform()
+        args.valid_batch_size = 1
+
+
+
     seed_everything(args.seed)
 
     save_dir = increment_path(os.path.join(model_dir, args.name))
@@ -184,6 +198,9 @@ def train(data_dir, model_dir, args):
     best_val_acc = 0
     best_val_score = 0
     best_val_loss = np.inf
+    tta_best_val_acc = 0
+    tta_best_val_score = 0
+    tta_best_val_loss = np.inf
     for epoch in range(args.epochs):
         # train loop
         model.train()
@@ -239,6 +256,10 @@ def train(data_dir, model_dir, args):
             val_acc_items = []
             val_predicts = torch.empty(0)
             val_targets = torch.empty(0)
+            tta_val_loss_items = []
+            tta_val_acc_items = []
+            tta_val_predicts = torch.empty(0)
+            tta_val_targets = torch.empty(0)
             figure = None
 
             for val_batch in val_loader:
@@ -249,15 +270,29 @@ def train(data_dir, model_dir, args):
                 a_labels = labels['age'].to(device)
 
                 ### update val_predicts & val_targets
-                m_outs, g_outs, a_outs = model(inputs)
+                ##tta 
+   
+                m_outs,g_outs,a_outs = model(inputs)
                 m_preds = torch.argmax(m_outs, dim=-1).cpu()
                 g_preds = (g_outs>0).squeeze().cpu()
                 a_preds = torch.argmax(a_outs, dim=-1).cpu()
+                    
+                if args.tta :
+                    #tta model
+                    tta_m_outs,tta_g_outs,tta_a_outs=tta(tta_transforms,model, inputs)
+                    tta_m_preds = torch.unsqueeze(torch.argmax(tta_m_outs, dim=-1),0).cpu()
+                    tta_a_preds = torch.unsqueeze(torch.argmax(tta_a_outs, dim=-1),0).cpu()
+                    if tta_g_outs >= 0.5 : tta_g_preds = 1
+                    else: tta_g_preds= 0
+                    tta_g_preds = torch.unsqueeze(torch.tensor(tta_g_preds),0).cpu()
+                    tta_m_outs,tta_g_outs,tta_a_outs = tta_m_outs.view(1,-1).cuda(),tta_g_outs.view(1,-1).cuda(),tta_a_outs.view(1,-1).cuda()
+
+
                 preds = label_encoder(m_preds, g_preds, a_preds)
                 labels = label_encoder(m_labels.cpu(), g_labels.cpu().squeeze(), a_labels.cpu())
+                
                 val_predicts = torch.cat((val_predicts,preds))
                 val_targets = torch.cat((val_targets,labels))
-
                 m_loss = criterion_mask(m_outs, m_labels).item()
                 g_loss = criterion_gender(g_outs, g_labels).item()
                 a_loss = criterion_age(a_outs, a_labels).item()
@@ -266,39 +301,58 @@ def train(data_dir, model_dir, args):
                 val_loss_items.append(loss_item)
                 val_acc_items.append(acc_item)
 
-                if figure is None:
-                    inputs_np = torch.clone(inputs).detach().cpu().permute(0, 2, 3, 1).numpy()
-                    inputs_np = denormalize_image(inputs_np, val_transform.mean, val_transform.std)
-                    figure = grid_image(
-                        inputs_np, labels, preds, n=16, shuffle=args.dataset != "MaskSplitByProfileDataset"
-                    )
+                if args.tta:
+                    tta_preds = label_encoder(tta_m_preds, tta_g_preds, tta_a_preds)
+                    tta_preds= torch.tensor([tta_preds])
+                    tta_val_predicts = torch.cat((tta_val_predicts,tta_preds))
+                    tta_val_targets = torch.cat((tta_val_targets,labels))
+                    
+                    tta_m_loss = criterion_mask(tta_m_outs, m_labels).item()
+                    tta_g_loss = criterion_gender(tta_g_outs, g_labels).item()
+                    tta_a_loss = criterion_age(tta_a_outs, a_labels).item()
+                    tta_loss_item = (tta_m_loss + tta_g_loss + tta_a_loss)
+                    tta_acc_item = (labels == tta_preds).sum().item()
+                    tta_val_loss_items.append(tta_loss_item)
+                    tta_val_acc_items.append(tta_acc_item)
+
+                # if figure is None:
+                #     inputs_np = torch.clone(inputs).detach().cpu().permute(0, 2, 3, 1).numpy()
+                #     inputs_np = denormalize_image(inputs_np, val_transform.mean, val_transform.std)
+                #     figure = grid_image(
+                #         inputs_np, labels, preds, n=16, shuffle=args.dataset != "MaskSplitByProfileDataset"
+                #     )
 
             val_loss = np.sum(val_loss_items) / len(val_loader)
             val_acc = np.sum(val_acc_items) / len(val_set)
             best_val_loss = min(best_val_loss, val_loss)
-            if val_acc > best_val_acc:
-                print(f"New best model for val accuracy : {val_acc:4.2%}! saving the best model..")
-                torch.save(model.module.state_dict(), f"{save_dir}/best_acc.pth")
-                best_val_acc = val_acc
-            torch.save(model.module.state_dict(), f"{save_dir}/last.pth")
 
+            if args.tta:
+                tta_val_loss = np.sum(tta_val_loss_items) / len(val_loader)
+                tta_val_acc = np.sum(tta_val_acc_items) / len(val_set)
+                tta_best_val_loss = min(tta_best_val_loss, tta_val_loss)
 
             ### print f1_score
             score = get_f1_score(val_targets, val_predicts, verbose=True)
+            tta_score = get_f1_score(tta_val_targets, tta_val_predicts, verbose=True)
             val_score = score['total']
-            if val_score > best_val_score:
-                print(f"New best model for f1 score : {val_score:4.2}! saving the best model..")
+            tta_val_score = tta_score['total']
+            if tta_val_score > tta_best_val_score:
+                print(f"New best model for f1 score : {tta_val_score:4.2}! saving the best model..")
                 torch.save(model.module.state_dict(), f"{save_dir}/best_score.pth")
-                best_val_score = val_score
+                tta_best_val_score = tta_val_score
             torch.save(model.module.state_dict(), f"{save_dir}/last.pth")
             print(
-                f"[Val] acc : {val_acc:4.2%}, loss: {val_loss:4.2} || "
+                f"[Val] F1-score : {val_score:4.2%}, loss: {val_loss:4.2} || "
                 f"best score : {best_val_score:4.2%}, best acc : {best_val_acc:4.2%}, best loss: {best_val_loss:4.2}"
+            )
+            print(
+                f"[Val] tta_F1-score : {tta_val_score:4.2%}, tta_loss: {tta_val_loss:4.2} || "
+                f"tta_best score : {tta_best_val_score:4.2%}, tta_best acc : {tta_best_val_acc:4.2%}, tta_best loss: {tta_best_val_loss:4.2}"
             )
             logger.add_scalar("Val/loss", val_loss, epoch)
             logger.add_scalar("Val/accuracy", val_acc, epoch)
             logger.add_scalar("Val/f1_score", val_score, epoch)
-            logger.add_figure("results", figure, epoch)
+            # logger.add_figure("results", figure, epoch)
             print()
 
         if args.scheduler == 'reducelr':
@@ -334,6 +388,7 @@ if __name__ == '__main__':
     parser.add_argument('--criterion_age', type=str, default='cross_entropy', help='criterion_age type (default: cross_entropy)')
     parser.add_argument('--lr_decay_step', type=int, default=20, help='learning rate scheduler deacy step (default: 20)')
     parser.add_argument('--log_interval', type=int, default=20, help='how many batches to wait before logging training status')
+    parser.add_argument('--tta', type=bool, default=False, help='launch Test Time Augmentation (TTA)')
     parser.add_argument('--name', default='exp', help='model save at {SM_MODEL_DIR}/{name}')
 
     # Dataset
