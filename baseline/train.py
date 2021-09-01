@@ -134,7 +134,7 @@ def train(data_dir, model_dir, args):
     train_loader = DataLoader(
         train_set,
         batch_size=args.batch_size,
-        num_workers=multiprocessing.cpu_count()//3,
+        num_workers=multiprocessing.cpu_count()//2,
         shuffle=True,
         pin_memory=use_cuda,
         drop_last=True,
@@ -143,7 +143,7 @@ def train(data_dir, model_dir, args):
     val_loader = DataLoader(
         val_set,
         batch_size=args.valid_batch_size,
-        num_workers=multiprocessing.cpu_count()//3,
+        num_workers=multiprocessing.cpu_count()//2,
         shuffle=False,
         pin_memory=use_cuda,
         drop_last=True,
@@ -304,7 +304,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataset', type=str, default='CustomDataset', help='dataset augmentation type (default: MaskBaseDataset)')
     parser.add_argument('--augmentation', type=str, default='BaseAugmentation', help='data augmentation type (default: BaseAugmentation)')
     # parser.add_argument("--resize", nargs="+", type=list, default=[128, 96], help='resize size for image when training')
-    parser.add_argument('--batch_size', type=int, default=64, help='input batch size for training (default: 64)')
+    parser.add_argument('--batch_size', type=int, default=32, help='input batch size for training (default: 64)')
     parser.add_argument('--valid_batch_size', type=int, default=32, help='input batch size for validing (default: 1000)')
     parser.add_argument('--model', type=str, default='CustomModel', help='model type (default: BaseModel)')
     parser.add_argument('--optimizer', type=str, default='Adam', help='optimizer type (default: SGD)')
