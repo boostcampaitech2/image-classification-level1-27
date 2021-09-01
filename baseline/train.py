@@ -313,6 +313,8 @@ if __name__ == '__main__':
     import os
     load_dotenv(verbose=True)
 
+
+
     # Data and model checkpoints directories
     parser.add_argument('--seed', type=int, default=1997, help='random seed (default: 42)')
     parser.add_argument('--epochs', type=int, default=40, help='number of epochs to train (default: 1)')
@@ -339,15 +341,19 @@ if __name__ == '__main__':
     parser.add_argument('--k_index', type=int, help='number of K-Fold validation')
 
     # Container environment
-    parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/images'))
+    parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/crop_images'))
     parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_MODEL_DIR', './model'))
     parser.add_argument('--info_path', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/train.csv'))
 
     parser.add_argument('--drop_size', type=int, default=32, help='aug drop size')
     args = parser.parse_args()
     print(args)
-
+    
     data_dir = args.data_dir
     model_dir = args.model_dir
+
+    if not os.path.isdir(model_dir):
+        os.makedirs(model_dir)
+
 
     train(data_dir, model_dir, args)
