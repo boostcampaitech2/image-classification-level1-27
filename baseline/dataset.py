@@ -318,13 +318,13 @@ class TestDataset(Dataset):
 
 
 class CustomDataset(Dataset):
-    def __init__(self, args, train=True, k_index=2):
+    def __init__(self, args, train=True):
         super(CustomDataset, self).__init__()
         self.data_dir = args.data_dir
         self.info_path = args.info_path
         self.k = args.n_splits
         self.seed = args.seed
-        self.k_index= k_index
+        self.k_index= args.k_index
         self.train = train
 
         self.folders = None
@@ -340,22 +340,30 @@ class CustomDataset(Dataset):
         self.num_classes = None
 
         ### prepare images and labels
-        if train:
-            print("Train Data Loading...")
-        else:
-            print("Test Data Loading...")
-        for directory in tqdm(self.folders):
+        for directory in self.folders:
             image_dir = os.path.join(self.data_dir, directory)
             ID, GENDER, RACE, real_AGE = directory.split('_')
 
-            if GENDER == "male":
-                GENDER = 0
-            elif GENDER =="female":
-                GENDER = 1
+            if self.train:
+                if GENDER == "male":
+                    GENDER = 0.95
+                elif GENDER =="female":
+                    GENDER = 0.05
 
-            # fix gender label error
-            if ID in ['006359', '006360', '006361', '006362', '006363', '006364', '001498-1', '004432']:
-                GENDER = 0 if GENDER==1 else 1
+                if ID in ['006359', '006360', '006361', '006362', '006363', '006364', '001498-1', '004432']:
+                    GENDER = 0.05 if GENDER==0.95 else 0.95
+                elif ID in ['003724', '003421', '003399', '001200', '005223', '001270', '006226', '000664']:
+                    GENDER = 0.5
+            
+            else:
+                if GENDER == "male":
+                    GENDER = 1
+                elif GENDER =="female":
+                    GENDER = 0
+                if ID in ['006359', '006360', '006361', '006362', '006363', '006364', '001498-1', '004432']:
+                    GENDER = 0 if GENDER==1 else 1
+
+        
 
             if int(real_AGE) < 30:
                 AGE = 0
@@ -404,7 +412,7 @@ class CustomDataset(Dataset):
         
         return image, label
 
-    def set_k_fold(self, info_path, k_index=2, k=5, seed=1997):
+    def set_k_fold(self, info_path, k_index, k=5, seed=1997):
         """
             output: train_folder, valid_folder
         """
@@ -415,7 +423,6 @@ class CustomDataset(Dataset):
         train_info = pd.read_csv(info_path)
 
         ### age/gender 동일 비율로 K Fold진행
-        new_age = np.array(train_info['age'])
         new_gender = np.array(train_info['gender'])
         str_for_split = new_age.astype(str)+new_gender
 
@@ -425,26 +432,6 @@ class CustomDataset(Dataset):
                 self.folders = train_info['path'][train_index] if self.train else train_info['path'][valid_index]
                 break
 
-    def set_transform(self, transform):
-        self.transform = transform
-
-class CustomTestDataset(Dataset):
-    def __init__(self, data_path, train=False):
-        super(CustomTestDataset, self).__init__()
-        self.data_dir = data_path
-        self.train = train   
-                    
-    def __len__(self):
-        return len(self.data_dir)
-    
-    def __getitem__(self, idx):
-        ### load image
-        image = np.array(Image.open(self.data_dir[idx]))
-        if self.transform:
-            image = self.transform(image=image)['image']
-        image.type(torch.float32)
-        
-        return image
 
     def set_transform(self, transform):
         self.transform = transform

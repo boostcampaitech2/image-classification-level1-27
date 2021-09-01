@@ -1,3 +1,5 @@
+# python [train.py](http://train.py/) --name baseline_augpp --model CustomModel --augmentation Augmentation_384 --lr 3e-3  —k_index 999
+
 import argparse
 import glob
 import json
@@ -11,7 +13,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from torch.optim.lr_scheduler import StepLR
+from torch import optim
+from torch.optim.lr_scheduler import *
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
@@ -38,7 +41,7 @@ def grid_image(np_images, gts, preds, n=16, shuffle=False):
     batch_size = np_images.shape[0]
     assert n <= batch_size
 
-    choices = random.choices(range(batch_size), k=n) if shuffle else list(range(n))
+    choices = random.sample(range(batch_size), k=n) if shuffle else list(range(n))
     figure = plt.figure(figsize=(12, 18 + 2))  # cautions: hardcoded, 이미지 크기에 따라 figsize 를 조정해야 할 수 있습니다. T.T
     plt.subplots_adjust(top=0.8)               # cautions: hardcoded, 이미지 크기에 따라 top 를 조정해야 할 수 있습니다. T.T
     n_grid = np.ceil(n ** 0.5)
@@ -84,9 +87,6 @@ def increment_path(path, exist_ok=False):
 
 
 def train(data_dir, model_dir, args):
-    #create model dir
-    createFolder(model_dir)
-
     seed_everything(args.seed)
 
     save_dir = increment_path(os.path.join(model_dir, args.name))
@@ -168,9 +168,13 @@ def train(data_dir, model_dir, args):
     optimizer = opt_module(
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=args.lr,
-        weight_decay=5e-4
+        #weight_decay=5e-4d
     )
-    scheduler = StepLR(optimizer, args.lr_decay_step, gamma=0.5)
+    #scheduler = StepLR(optimizer, args.lr_decay_step, gamma=0.5)
+    if args.scheduler == 'reducelr':
+        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, threshold=0.002, min_lr=1e-4)
+    elif args.scheduler == 'cosine':
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=20, eta_min=2e-4)
 
     # -- logging
     logger = SummaryWriter(log_dir=save_dir)
@@ -178,6 +182,7 @@ def train(data_dir, model_dir, args):
         json.dump(vars(args), f, ensure_ascii=False, indent=4)
 
     best_val_acc = 0
+    best_val_score = 0
     best_val_loss = np.inf
     for epoch in range(args.epochs):
         # train loop
@@ -224,7 +229,7 @@ def train(data_dir, model_dir, args):
                 loss_value = 0
                 matches = 0
 
-        scheduler.step()
+        #scheduler.step()
 
         # val loop
         with torch.no_grad():
@@ -273,23 +278,33 @@ def train(data_dir, model_dir, args):
             best_val_loss = min(best_val_loss, val_loss)
             if val_acc > best_val_acc:
                 print(f"New best model for val accuracy : {val_acc:4.2%}! saving the best model..")
-                torch.save(model.module.state_dict(), f"{save_dir}/best.pth")
+                torch.save(model.module.state_dict(), f"{save_dir}/best_acc.pth")
                 best_val_acc = val_acc
             torch.save(model.module.state_dict(), f"{save_dir}/last.pth")
-            print(
-                f"[Val] acc : {val_acc:4.2%}, loss: {val_loss:4.2} || "
-                f"best acc : {best_val_acc:4.2%}, best loss: {best_val_loss:4.2}"
-            )
+
 
             ### print f1_score
             score = get_f1_score(val_targets, val_predicts, verbose=True)
-
+            val_score = score['total']
+            if val_score > best_val_score:
+                print(f"New best model for f1 score : {val_score:4.2}! saving the best model..")
+                torch.save(model.module.state_dict(), f"{save_dir}/best_score.pth")
+                best_val_score = val_score
+            torch.save(model.module.state_dict(), f"{save_dir}/last.pth")
+            print(
+                f"[Val] acc : {val_acc:4.2%}, loss: {val_loss:4.2} || "
+                f"best score : {best_val_score:4.2%}, best acc : {best_val_acc:4.2%}, best loss: {best_val_loss:4.2}"
+            )
             logger.add_scalar("Val/loss", val_loss, epoch)
             logger.add_scalar("Val/accuracy", val_acc, epoch)
-            logger.add_scalar("Val/f1_score", score['total'], epoch)
+            logger.add_scalar("Val/f1_score", val_score, epoch)
             logger.add_figure("results", figure, epoch)
             print()
 
+        if args.scheduler == 'reducelr':
+            scheduler.step(torch.tensor(val_loss))
+        elif args.scheduler == 'cosine':
+            scheduler.step()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -300,15 +315,16 @@ if __name__ == '__main__':
 
     # Data and model checkpoints directories
     parser.add_argument('--seed', type=int, default=1997, help='random seed (default: 42)')
-    parser.add_argument('--epochs', type=int, default=30, help='number of epochs to train (default: 1)')
+    parser.add_argument('--epochs', type=int, default=40, help='number of epochs to train (default: 1)')
     parser.add_argument('--dataset', type=str, default='CustomDataset', help='dataset augmentation type (default: MaskBaseDataset)')
     parser.add_argument('--augmentation', type=str, default='BaseAugmentation', help='data augmentation type (default: BaseAugmentation)')
     # parser.add_argument("--resize", nargs="+", type=list, default=[128, 96], help='resize size for image when training')
-    parser.add_argument('--batch_size', type=int, default=32, help='input batch size for training (default: 64)')
+    parser.add_argument('--batch_size', type=int, default=64, help='input batch size for training (default: 64)')
     parser.add_argument('--valid_batch_size', type=int, default=32, help='input batch size for validing (default: 1000)')
     parser.add_argument('--model', type=str, default='CustomModel', help='model type (default: BaseModel)')
     parser.add_argument('--optimizer', type=str, default='Adam', help='optimizer type (default: SGD)')
-    parser.add_argument('--lr', type=float, default=1e-3, help='learning rate (default: 1e-3)')
+    parser.add_argument('--scheduler', type=str, default='reducelr', help='scheduler type (default: reducelr)')
+    parser.add_argument('--lr', type=float, default=2e-3, help='learning rate (default: 1e-3)')
     parser.add_argument('--val_ratio', type=float, default=0.2, help='ratio for validaton (default: 0.2)')
     # parser.add_argument('--criterion', type=str, default='cross_entropy', help='criterion type (default: cross_entropy)')
     parser.add_argument('--criterion_mask', type=str, default='cross_entropy', help='criterion_mask type (default: cross_entropy)')
@@ -320,12 +336,14 @@ if __name__ == '__main__':
 
     # Dataset
     parser.add_argument('--n_splits', type=int, default=5, help='number for K-Fold validation')
+    parser.add_argument('--k_index', type=int, help='number of K-Fold validation')
 
     # Container environment
     parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/images'))
-    parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_MODEL_DIR', '/opt/ml/model'))
+    parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_MODEL_DIR', './model'))
     parser.add_argument('--info_path', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/train.csv'))
 
+    parser.add_argument('--drop_size', type=int, default=32, help='aug drop size')
     args = parser.parse_args()
     print(args)
 
