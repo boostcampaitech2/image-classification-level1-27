@@ -5,8 +5,10 @@ import multiprocessing
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader
+import torch.nn as nn
 
-from dataset import TestDataset, MaskBaseDataset
+from dataset import MaskBaseDataset
+from tqdm import tqdm
 
 from utils import *
 
@@ -15,7 +17,7 @@ def load_model(saved_model, device):
     model_module = getattr(import_module("model"), args.model)  # default: BaseModel
     model = model_module(
     ).to(device)
-    model_path = os.path.join(saved_model, 'best.pth')
+    model_path = os.path.join(saved_model, 'best_acc.pth')
     model.load_state_dict(torch.load(model_path, map_location=device))
 
     return model
@@ -38,7 +40,15 @@ def inference(data_dir, model_dir, output_dir, args):
     
     test_set = dataset_module(
         data_path = img_paths,
-        )
+        train=False)
+
+    transform_module = getattr(import_module("transform"), args.augmentation)  # default: BaseAugmentation
+
+    test_transform = transform_module(
+        train=False
+    )
+      
+    test_set.set_transform(test_transform)
 
     loader = DataLoader(
         test_set,
@@ -50,22 +60,44 @@ def inference(data_dir, model_dir, output_dir, args):
     )
 
     print("Calculating inference results..")
-    preds = []
+    m_out_list = []
+    g_out_list = []
+    a_out_list = []
     with torch.no_grad():
-        for idx, images in enumerate(loader):
+        for idx, images in enumerate(tqdm(loader)):
             images = images.to(device)
-            # pred = model(images)
+
 
             m_outs, g_outs, a_outs = model(images)
-            m_preds = torch.argmax(m_outs, dim=-1).cpu()
-            g_preds = (g_outs>0).squeeze().cpu()
-            a_preds = torch.argmax(a_outs, dim=-1).cpu()
-            pred = label_encoder(m_preds, g_preds, a_preds)
             
-            # pred = pred.argmax(dim=-1)
-            preds.extend(pred.cpu().numpy())
+            m_outs = nn.functional.softmax(m_outs).cpu()
+            g_outs = torch.sigmoid(g_outs).cpu()
+            a_outs = nn.functional.softmax(a_outs).cpu()
+            
+            m_out_list += [m_outs]
+            g_out_list += [g_outs]
+            a_out_list += [a_outs]
 
-    info['ans'] = preds
+
+            
+            # out = out.argmax(dim=-1)
+        m_outs = torch.cat(m_out_list,0)
+        g_outs = torch.cat(g_out_list,0)
+        a_outs = torch.cat(a_out_list,0)
+
+        print(m_outs.shape)
+        print(g_outs.shape)
+        print(a_outs.shape)
+
+    info['m_out_0'] = m_outs[:, 0]
+    info['m_out_1'] = m_outs[:, 1]
+    info['m_out_2'] = m_outs[:, 2]
+    
+    info['g_out'] = g_outs[:,0]
+
+    info['a_out_0'] = a_outs[:, 0]
+    info['a_out_1'] = a_outs[:, 1]
+    info['a_out_2'] = a_outs[:, 2]
     info.to_csv(os.path.join(output_dir, f'output.csv'), index=False)
     print(f'Inference Done!')
 
@@ -74,14 +106,14 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # Data and model checkpoints directories
-    parser.add_argument('--dataset', type=str, default='TestDataset', help='dataset augmentation type (default: CustomDataset)')
+    parser.add_argument('--dataset', type=str, default='CustomTestDataset', help='dataset augmentation type (default: CustomDataset)')
     parser.add_argument('--batch_size', type=int, default=16, help='input batch size for validing (default: 1000)')
     parser.add_argument('--model', type=str, default='CustomModel', help='model type (default: BaseModel)')
-    parser.add_argument('--resize', type=tuple, default=(384, 288), help='resize size for image when you trained (default: (96, 128))')
-    parser.add_argument('--augmentation', type=str, default='BaseAugmentation', help='data augmentation type (default: BaseAugmentation)')    
+    parser.add_argument('--resize', type=tuple, default=(512, 384), help='resize size for image when you trained (default: (96, 128))')
+    parser.add_argument('--augmentation', type=str, default='Augmentation_384', help='data augmentation type (default: BaseAugmentation)')    
     # Container environment
     parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_EVAL', '/opt/ml/input/data/eval'))
-    parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_CHANNEL_MODEL', '/opt/ml/model/exp8'))  # modified by ihyun
+    parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_CHANNEL_MODEL', './model/ensemble'))  # modified by ihyun
     parser.add_argument('--output_dir', type=str, default=os.environ.get('SM_OUTPUT_DATA_DIR', '/opt/ml/output'))
 
     args = parser.parse_args()
