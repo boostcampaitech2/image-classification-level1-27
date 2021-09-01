@@ -21,6 +21,12 @@ from torch.utils.tensorboard import SummaryWriter
 from dataset import MaskBaseDataset
 from loss import create_criterion
 from utils import *
+import gc
+    
+gc.collect()
+
+torch.cuda.empty_cache()
+
 
 def seed_everything(seed):
     torch.manual_seed(seed)

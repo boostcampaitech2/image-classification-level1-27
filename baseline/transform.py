@@ -60,3 +60,38 @@ class Augmentation_384:
                             ])
     def __call__(self, image):
         return self.transform(image=image)
+
+
+class Augmentation_384_384:
+    def __init__(self, train=True, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)):
+        self.mean = mean
+        self.std = std
+        if train:
+            self.transform = Compose([#CenterCrop(384,384),
+                                    Resize(384,384),
+                                    ShiftScaleRotate(rotate_limit=25,shift_limit=0.0325, scale_limit=[-0.0,0.2], p=0.5), 
+                                    HorizontalFlip(p=0.5),
+                                    
+                                    OneOf([CLAHE(clip_limit=1.0, p=0.5),
+                                        HueSaturationValue(p=0.5),
+                                        RGBShift(p=0.5)],p=0.5),
+                                    RandomBrightnessContrast(0.2, 0.3,p=0.5),
+                                     OneOf(
+                                         [
+                                          Perspective(p=0.5),
+                                     GridDistortion(p=0.5),
+                                     OpticalDistortion(p=0.5),], p=0.2
+                                     ),    
+                                    Normalize([0.485, 0.456, 0.406],
+                                           [0.229, 0.224, 0.225]),
+                                    ToTensorV2(),
+                                    ])
+        else:
+            self.transform = Compose([#CenterCrop(384,384),
+                            Resize(384,384),
+                            Normalize([0.485, 0.456, 0.406],
+                                    [0.229, 0.224, 0.225]),
+                            ToTensorV2(),
+                            ])
+    def __call__(self, image):
+        return self.transform(image=image)

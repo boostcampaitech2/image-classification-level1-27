@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
-
+import torch
+from pytorch_pretrained_vit import ViT
 
 
 class BaseModel(nn.Module):
@@ -55,6 +56,28 @@ class CustomModel(nn.Module):
         """
         self.num_classes = None
 
+    def forward(self, x):
+        x = self.backbone(x)
+        mask_output = self.mask_fc(x)
+        gender_output = self.gender_fc(x)
+        age_output = self.age_fc(x)
+        """
+        1. 위에서 정의한 모델 아키텍쳐를 forward propagation 을 진행해주세요
+        2. 결과로 나온 output 을 return 해주세요
+        """
+        return mask_output, gender_output, age_output
+
+
+class VITModel(nn.Module):
+    def __init__(self, pretrained=True):
+        super().__init__()
+        self.backbone = ViT('B_16_imagenet1k', pretrained=pretrained)
+
+        ### fc layer 변경
+        self.backbone.fc = nn.Identity()
+        self.mask_fc = nn.Linear(768, 3)
+        self.gender_fc = nn.Linear(768, 1)
+        self.age_fc = nn.Linear(768, 3)
     def forward(self, x):
         x = self.backbone(x)
         mask_output = self.mask_fc(x)
