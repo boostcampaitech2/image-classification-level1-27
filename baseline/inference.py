@@ -68,17 +68,26 @@ def inference(data_dir, model_dir, output_dir, args):
         for idx, images in enumerate(tqdm(loader)):
             images = images.to(device)
 
+            if args.tta:
+                m_outs, g_outs, a_outs = tta(tta_transforms, model, images)
+                tta_m_preds = torch.unsqueeze(torch.argmax(m_outs, dim=-1),0).cpu()
+                tta_a_preds = torch.unsqueeze(torch.argmax(a_outs, dim=-1),0).cpu()
+                if g_outs >= 0.5 : tta_g_preds = 1
+                else: tta_g_preds= 0
+                tta_g_preds = torch.unsqueeze(torch.tensor(tta_g_preds),0).cpu()
+                tta_preds = label_encoder(tta_m_preds, tta_g_preds, tta_a_preds)
+                ans.append(tta_preds[0].item())
+            else:
+                model.eval()
+                m_outs, g_outs, a_outs = model(images)
+                m_preds = torch.argmax(m_outs, dim=-1).cpu()
+                g_preds = (g_outs>0).squeeze().cpu()
+                a_preds = torch.argmax(a_outs, dim=-1).cpu()
+                pred = label_encoder(m_preds, g_preds, a_preds)
+                
+                # pred = pred.argmax(dim=-1)
+                ans.extend(pred.cpu().numpy())
 
-            m_outs, g_outs, a_outs = tta(tta_transforms, model, images)
-
-            tta_m_preds = torch.unsqueeze(torch.argmax(m_outs, dim=-1),0).cpu()
-            tta_a_preds = torch.unsqueeze(torch.argmax(a_outs, dim=-1),0).cpu()
-            if g_outs >= 0.5 : tta_g_preds = 1
-            else: tta_g_preds= 0
-            tta_g_preds = torch.unsqueeze(torch.tensor(tta_g_preds),0).cpu()
-            tta_preds = label_encoder(tta_m_preds, tta_g_preds, tta_a_preds)
-            ans.append(tta_preds[0].item())
-            
     info['ans'] = ans
     info.to_csv(os.path.join(output_dir, f'output.csv'), index=False)
     print(f'Inference Done!')

@@ -55,12 +55,14 @@ def createFolder(directory):
 
 
 def tta(tta_transforms, model, inputs):
+    model.eval()
     m_out_list = [[],[],[]]
     g_out_list = []
     a_out_list = [[],[],[]]
     for transformer in tta_transforms: # custom transforms or e.g. tta.aliases.d4_transform() 
                     # augment image
         augmented_image = transformer.augment_image(inputs)
+        
         m, g, a = model(augmented_image)
                     
         m_tensor = nn.functional.softmax(m).cpu()[0]
@@ -77,15 +79,15 @@ def tta(tta_transforms, model, inputs):
                     
                 # reduce results as you want, e.g mean/max/min
 
-        m1_result = torch.mean(torch.tensor(m_out_list[0]))
-        m2_result = torch.mean(torch.tensor(m_out_list[1]))
-        m3_result = torch.mean(torch.tensor(m_out_list[2]))
-        a1_result = torch.mean(torch.tensor(a_out_list[0]))
-        a2_result = torch.mean(torch.tensor(a_out_list[1]))
-        a3_result = torch.mean(torch.tensor(a_out_list[2]))
-        g_result = torch.mean(torch.tensor(g_out_list))
+    m1_result = torch.mean(torch.tensor(m_out_list[0]))
+    m2_result = torch.mean(torch.tensor(m_out_list[1]))
+    m3_result = torch.mean(torch.tensor(m_out_list[2]))
+    a1_result = torch.mean(torch.tensor(a_out_list[0]))
+    a2_result = torch.mean(torch.tensor(a_out_list[1]))
+    a3_result = torch.mean(torch.tensor(a_out_list[2]))
+    g_result = torch.mean(torch.tensor(g_out_list))
 
-        m_outs = torch.tensor([m1_result, m2_result, m3_result])
-        a_outs = torch.tensor([a1_result, a2_result, a3_result])
+    m_outs = torch.tensor([m1_result, m2_result, m3_result])
+    a_outs = torch.tensor([a1_result, a2_result, a3_result])
 
-        return m_outs, torch.tensor(g_result).cpu(), a_outs
+    return m_outs, torch.tensor(g_result).cpu(), a_outs

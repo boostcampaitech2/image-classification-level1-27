@@ -66,9 +66,9 @@ def get_tta_transform():
     transforms = tta.Compose(
     [
         tta.HorizontalFlip(),
-        tta.Rotate90(angles=[0, 180]),
-        tta.Scale(scales=[1, 2, 4]),
-        tta.Multiply(factors=[0.9, 1, 1.1]),        
+        # tta.VerticalFlip(),
+        # #밝기
+        tta.Multiply(factors=[1.3, 1])
     ])
 
     return transforms

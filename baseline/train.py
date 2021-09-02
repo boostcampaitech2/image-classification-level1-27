@@ -160,7 +160,7 @@ def train(data_dir, model_dir, args):
         num_workers=multiprocessing.cpu_count()//2,
         shuffle=False,
         pin_memory=use_cuda,
-        drop_last=True,
+        drop_last=False,
     )
 
     # -- model
@@ -188,7 +188,7 @@ def train(data_dir, model_dir, args):
     if args.scheduler == 'reducelr':
         scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, threshold=0.002, min_lr=1e-4)
     elif args.scheduler == 'cosine':
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=20, eta_min=2e-4)
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10, eta_min=0)
 
     # -- logging
     logger = SummaryWriter(log_dir=save_dir)
@@ -198,9 +198,9 @@ def train(data_dir, model_dir, args):
     best_val_acc = 0
     best_val_score = 0
     best_val_loss = np.inf
-    tta_best_val_acc = 0
-    tta_best_val_score = 0
-    tta_best_val_loss = np.inf
+    # tta_best_val_acc = 0
+    # tta_best_val_score = 0
+    # tta_best_val_loss = np.inf
     for epoch in range(args.epochs):
         # train loop
         model.train()
@@ -256,10 +256,10 @@ def train(data_dir, model_dir, args):
             val_acc_items = []
             val_predicts = torch.empty(0)
             val_targets = torch.empty(0)
-            tta_val_loss_items = []
-            tta_val_acc_items = []
-            tta_val_predicts = torch.empty(0)
-            tta_val_targets = torch.empty(0)
+            # tta_val_loss_items = []
+            # tta_val_acc_items = []
+            # tta_val_predicts = torch.empty(0)
+            # tta_val_targets = torch.empty(0)
             figure = None
 
             for val_batch in val_loader:
@@ -277,15 +277,15 @@ def train(data_dir, model_dir, args):
                 g_preds = (g_outs>0).squeeze().cpu()
                 a_preds = torch.argmax(a_outs, dim=-1).cpu()
                     
-                if args.tta :
-                    #tta model
-                    tta_m_outs,tta_g_outs,tta_a_outs=tta(tta_transforms,model, inputs)
-                    tta_m_preds = torch.unsqueeze(torch.argmax(tta_m_outs, dim=-1),0).cpu()
-                    tta_a_preds = torch.unsqueeze(torch.argmax(tta_a_outs, dim=-1),0).cpu()
-                    if tta_g_outs >= 0.5 : tta_g_preds = 1
-                    else: tta_g_preds= 0
-                    tta_g_preds = torch.unsqueeze(torch.tensor(tta_g_preds),0).cpu()
-                    tta_m_outs,tta_g_outs,tta_a_outs = tta_m_outs.view(1,-1).cuda(),tta_g_outs.view(1,-1).cuda(),tta_a_outs.view(1,-1).cuda()
+                # if args.tta :
+                #     #tta model
+                #     tta_m_outs,tta_g_outs,tta_a_outs=tta(tta_transforms,model, inputs)
+                #     tta_m_preds = torch.unsqueeze(torch.argmax(tta_m_outs, dim=-1),0).cpu()
+                #     tta_a_preds = torch.unsqueeze(torch.argmax(tta_a_outs, dim=-1),0).cpu()
+                #     if tta_g_outs >= 0.5 : tta_g_preds = 1
+                #     else: tta_g_preds= 0
+                #     tta_g_preds = torch.unsqueeze(torch.tensor(tta_g_preds),0).cpu()
+                #     tta_m_outs,tta_g_outs,tta_a_outs = tta_m_outs.view(1,-1).cuda(),tta_g_outs.view(1,-1).cuda(),tta_a_outs.view(1,-1).cuda()
 
 
                 preds = label_encoder(m_preds, g_preds, a_preds)
@@ -301,19 +301,19 @@ def train(data_dir, model_dir, args):
                 val_loss_items.append(loss_item)
                 val_acc_items.append(acc_item)
 
-                if args.tta:
-                    tta_preds = label_encoder(tta_m_preds, tta_g_preds, tta_a_preds)
-                    tta_preds= torch.tensor([tta_preds])
-                    tta_val_predicts = torch.cat((tta_val_predicts,tta_preds))
-                    tta_val_targets = torch.cat((tta_val_targets,labels))
+                # if args.tta:
+                #     tta_preds = label_encoder(tta_m_preds, tta_g_preds, tta_a_preds)
+                #     tta_preds= torch.tensor([tta_preds])
+                #     tta_val_predicts = torch.cat((tta_val_predicts,tta_preds))
+                #     tta_val_targets = torch.cat((tta_val_targets,labels))
                     
-                    tta_m_loss = criterion_mask(tta_m_outs, m_labels).item()
-                    tta_g_loss = criterion_gender(tta_g_outs, g_labels).item()
-                    tta_a_loss = criterion_age(tta_a_outs, a_labels).item()
-                    tta_loss_item = (tta_m_loss + tta_g_loss + tta_a_loss)
-                    tta_acc_item = (labels == tta_preds).sum().item()
-                    tta_val_loss_items.append(tta_loss_item)
-                    tta_val_acc_items.append(tta_acc_item)
+                #     tta_m_loss = criterion_mask(tta_m_outs, m_labels).item()
+                #     tta_g_loss = criterion_gender(tta_g_outs, g_labels).item()
+                #     tta_a_loss = criterion_age(tta_a_outs, a_labels).item()
+                #     tta_loss_item = (tta_m_loss + tta_g_loss + tta_a_loss)
+                #     tta_acc_item = (labels == tta_preds).sum().item()
+                #     tta_val_loss_items.append(tta_loss_item)
+                #     tta_val_acc_items.append(tta_acc_item)
 
                 # if figure is None:
                 #     inputs_np = torch.clone(inputs).detach().cpu().permute(0, 2, 3, 1).numpy()
@@ -326,29 +326,29 @@ def train(data_dir, model_dir, args):
             val_acc = np.sum(val_acc_items) / len(val_set)
             best_val_loss = min(best_val_loss, val_loss)
 
-            if args.tta:
-                tta_val_loss = np.sum(tta_val_loss_items) / len(val_loader)
-                tta_val_acc = np.sum(tta_val_acc_items) / len(val_set)
-                tta_best_val_loss = min(tta_best_val_loss, tta_val_loss)
+            # if args.tta:
+            #     tta_val_loss = np.sum(tta_val_loss_items) / len(val_loader)
+            #     tta_val_acc = np.sum(tta_val_acc_items) / len(val_set)
+            #     tta_best_val_loss = min(tta_best_val_loss, tta_val_loss)
 
-            ### print f1_score
+            # ### print f1_score
             score = get_f1_score(val_targets, val_predicts, verbose=True)
-            tta_score = get_f1_score(tta_val_targets, tta_val_predicts, verbose=True)
+            # tta_score = get_f1_score(tta_val_targets, tta_val_predicts, verbose=True)
             val_score = score['total']
-            tta_val_score = tta_score['total']
-            if tta_val_score > tta_best_val_score:
-                print(f"New best model for f1 score : {tta_val_score:4.2}! saving the best model..")
+            # tta_val_score = tta_score['total']
+            if val_score > best_val_score:
+                print(f"New best model for f1 score : {val_score:4.2}! saving the best model..")
                 torch.save(model.module.state_dict(), f"{save_dir}/best_score.pth")
-                tta_best_val_score = tta_val_score
+                best_val_score = val_score
             torch.save(model.module.state_dict(), f"{save_dir}/last.pth")
             print(
                 f"[Val] F1-score : {val_score:4.2%}, loss: {val_loss:4.2} || "
                 f"best score : {best_val_score:4.2%}, best acc : {best_val_acc:4.2%}, best loss: {best_val_loss:4.2}"
             )
-            print(
-                f"[Val] tta_F1-score : {tta_val_score:4.2%}, tta_loss: {tta_val_loss:4.2} || "
-                f"tta_best score : {tta_best_val_score:4.2%}, tta_best acc : {tta_best_val_acc:4.2%}, tta_best loss: {tta_best_val_loss:4.2}"
-            )
+            # print(
+            #     f"[Val] tta_F1-score : {tta_val_score:4.2%}, tta_loss: {tta_val_loss:4.2} || "
+            #     f"tta_best score : {tta_best_val_score:4.2%}, tta_best acc : {tta_best_val_acc:4.2%}, tta_best loss: {tta_best_val_loss:4.2}"
+            # )
             logger.add_scalar("Val/loss", val_loss, epoch)
             logger.add_scalar("Val/accuracy", val_acc, epoch)
             logger.add_scalar("Val/f1_score", val_score, epoch)
@@ -396,7 +396,7 @@ if __name__ == '__main__':
     parser.add_argument('--k_index', type=int, help='number of K-Fold validation')
 
     # Container environment
-    parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/crop_images'))
+    parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/crop_images')) #/opt/ml/input/data/train/images
     parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_MODEL_DIR', './model'))
     parser.add_argument('--info_path', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/train.csv'))
 
