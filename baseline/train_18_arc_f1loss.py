@@ -21,6 +21,7 @@ from torch.utils.tensorboard import SummaryWriter
 from dataset import MaskBaseDataset
 from loss import create_criterion
 from utils import *
+from loss import *
 
 def seed_everything(seed):
     torch.manual_seed(seed)
@@ -134,7 +135,7 @@ def train(data_dir, model_dir, args):
     train_loader = DataLoader(
         train_set,
         batch_size=args.batch_size,
-        num_workers=multiprocessing.cpu_count()//2,
+        num_workers=3,
         shuffle=True,
         pin_memory=use_cuda,
         drop_last=True,
@@ -143,10 +144,10 @@ def train(data_dir, model_dir, args):
     val_loader = DataLoader(
         val_set,
         batch_size=args.valid_batch_size,
-        num_workers=multiprocessing.cpu_count()//2,
+        num_workers=3,
         shuffle=False,
         pin_memory=use_cuda,
-        drop_last=True,
+        drop_last=False,
     )
 
     # -- model
@@ -158,17 +159,19 @@ def train(data_dir, model_dir, args):
     ).to(device)
     model = torch.nn.DataParallel(model)
 
+
     # -- loss & metric
-    # criterion = create_criterion(args.criterion)  # default: cross_entropy
-    criterion_mask = create_criterion(args.criterion_mask)  # default: cross_entropy
-    criterion_gender = create_criterion(args.criterion_gender)  # default: bce_loss
-    criterion_age = create_criterion(args.criterion_age)  # default: cross_entropy
+    # criterion = FocalLoss(torch.tensor(train_set.class_weight).to(device))  # default: cross_entropy
+    criterion = create_criterion(args.criterion)  # default: cross_entropy
+    # criterion_gender = create_criterion(args.criterion_gender)  # default: bce_loss
+    # criterion_age = create_criterion(args.criterion_age)  # default: cross_entropy
 
     opt_module = getattr(import_module("torch.optim"), args.optimizer)  # default: SGD
     optimizer = opt_module(
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=args.lr,
-        #weight_decay=5e-4d
+        momentum= 0.9,
+        weight_decay=5e-4,
     )
     #scheduler = StepLR(optimizer, args.lr_decay_step, gamma=0.5)
     if args.scheduler == 'reducelr':
@@ -192,27 +195,19 @@ def train(data_dir, model_dir, args):
         for idx, train_batch in enumerate(train_loader):
             inputs, labels = train_batch
             inputs = inputs.to(device)
-            m_labels = labels['mask'].to(device)
-            g_labels = labels['gender'].to(device)
-            a_labels = labels['age'].to(device)
+            labels = labels.to(device)
+
 
             optimizer.zero_grad()
 
-            m_outs, g_outs, a_outs = model(inputs)
-            m_loss = criterion_mask(m_outs, m_labels)
-            g_loss = criterion_gender(g_outs, g_labels)
-            a_loss = criterion_age(a_outs, a_labels)
-            loss = m_loss + g_loss + a_loss
+            outs = model(inputs, labels)
+            loss = criterion(outs, labels)
             loss.backward()
             optimizer.step()
 
             loss_value += loss.item()
             with torch.no_grad():
-                m_preds = torch.argmax(m_outs, dim=-1)
-                g_preds = (g_outs>0).squeeze()
-                a_preds = torch.argmax(a_outs, dim=-1)
-                preds = label_encoder(m_preds, g_preds, a_preds)
-                labels = label_encoder(m_labels, g_labels.squeeze(), a_labels)
+                preds = torch.argmax(outs, dim=-1)
                 matches += (preds == labels).sum().item()
 
             if (idx + 1) % args.log_interval == 0:
@@ -244,26 +239,18 @@ def train(data_dir, model_dir, args):
             for val_batch in val_loader:
                 inputs, labels = val_batch
                 inputs = inputs.to(device)
-                m_labels = labels['mask'].to(device)
-                g_labels = labels['gender'].to(device)
-                a_labels = labels['age'].to(device)
+                labels = labels.to(device)
+
 
                 ### update val_predicts & val_targets
-                m_outs, g_outs, a_outs = model(inputs)
-                m_preds = torch.argmax(m_outs, dim=-1).cpu()
-                g_preds = (g_outs>0).squeeze().cpu()
-                a_preds = torch.argmax(a_outs, dim=-1).cpu()
-                preds = label_encoder(m_preds, g_preds, a_preds)
-                labels = label_encoder(m_labels.cpu(), g_labels.cpu().squeeze(), a_labels.cpu())
-                val_predicts = torch.cat((val_predicts,preds))
-                val_targets = torch.cat((val_targets,labels))
+                outs = model(inputs)
+                preds = torch.argmax(outs, dim=-1)
+                val_predicts = torch.cat((val_predicts,preds.cpu()))
+                val_targets = torch.cat((val_targets,labels.cpu()))
 
-                m_loss = criterion_mask(m_outs, m_labels).item()
-                g_loss = criterion_gender(g_outs, g_labels).item()
-                a_loss = criterion_age(a_outs, a_labels).item()
-                loss_item = (m_loss + g_loss + a_loss)
+                loss = criterion(outs, labels).item()
                 acc_item = (labels == preds).sum().item()
-                val_loss_items.append(loss_item)
+                val_loss_items.append(loss)
                 val_acc_items.append(acc_item)
 
                 if figure is None:
@@ -318,20 +305,20 @@ if __name__ == '__main__':
     # Data and model checkpoints directories
     parser.add_argument('--seed', type=int, default=1997, help='random seed (default: 42)')
     parser.add_argument('--epochs', type=int, default=40, help='number of epochs to train (default: 1)')
-    parser.add_argument('--dataset', type=str, default='CustomDataset', help='dataset augmentation type (default: MaskBaseDataset)')
+    parser.add_argument('--dataset', type=str, default='CustomDataset_18', help='dataset augmentation type (default: MaskBaseDataset)')
     parser.add_argument('--augmentation', type=str, default='Augmentation_384', help='data augmentation type (default: BaseAugmentation)')
     # parser.add_argument("--resize", nargs="+", type=list, default=[128, 96], help='resize size for image when training')
-    parser.add_argument('--batch_size', type=int, default=64, help='input batch size for training (default: 64)')
+    parser.add_argument('--batch_size', type=int, default=128, help='input batch size for training (default: 64)')
     parser.add_argument('--valid_batch_size', type=int, default=32, help='input batch size for validing (default: 1000)')
-    parser.add_argument('--model', type=str, default='CustomModel', help='model type (default: BaseModel)')
-    parser.add_argument('--optimizer', type=str, default='Adam', help='optimizer type (default: SGD)')
+    parser.add_argument('--model', type=str, default='CustomModel_Arc', help='model type (default: BaseModel)')
+    parser.add_argument('--optimizer', type=str, default='SGD', help='optimizer type (default: SGD)')
     parser.add_argument('--scheduler', type=str, default='reducelr', help='scheduler type (default: reducelr)')
-    parser.add_argument('--lr', type=float, default=2e-3, help='learning rate (default: 1e-3)')
+    parser.add_argument('--lr', type=float, default=3e-3, help='learning rate (default: 1e-3)')
     parser.add_argument('--val_ratio', type=float, default=0.2, help='ratio for validaton (default: 0.2)')
-    # parser.add_argument('--criterion', type=str, default='cross_entropy', help='criterion type (default: cross_entropy)')
-    parser.add_argument('--criterion_mask', type=str, default='cross_entropy', help='criterion_mask type (default: cross_entropy)')
-    parser.add_argument('--criterion_gender', type=str, default='bce_loss', help='criterion_gender type (default: bce_loss)')
-    parser.add_argument('--criterion_age', type=str, default='cross_entropy', help='criterion_age type (default: cross_entropy)')
+    parser.add_argument('--criterion', type=str, default='f1', help='criterion type (default: cross_entropy)')
+    # parser.add_argument('--criterion_mask', type=str, default='cross_entropy', help='criterion_mask type (default: cross_entropy)')
+    # parser.add_argument('--criterion_gender', type=str, default='bce_loss', help='criterion_gender type (default: bce_loss)')
+    # parser.add_argument('--criterion_age', type=str, default='cross_entropy', help='criterion_age type (default: cross_entropy)')
     parser.add_argument('--lr_decay_step', type=int, default=20, help='learning rate scheduler deacy step (default: 20)')
     parser.add_argument('--log_interval', type=int, default=20, help='how many batches to wait before logging training status')
     parser.add_argument('--name', default='exp', help='model save at {SM_MODEL_DIR}/{name}')

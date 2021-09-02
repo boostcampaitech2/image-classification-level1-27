@@ -1,4 +1,4 @@
-# python [train.py](http://train.py/) --name baseline_augpp --model CustomModel --augmentation Augmentation_384 --lr 3e-3  —k_index 999
+#python train_cutmix.py --name 60cutmix_augpp_Aug60_pp --model CustomModel --dataset Aug60Dataset --augmentation Augmentation_384_pp --cutmix_60 True --lr 3e-3
 
 import argparse
 import glob
@@ -66,6 +66,7 @@ def grid_image(np_images, gts, preds, n=16, shuffle=False):
         plt.imshow(image, cmap=plt.cm.binary)
 
     return figure
+
 
 
 def increment_path(path, exist_ok=False):
@@ -172,7 +173,7 @@ def train(data_dir, model_dir, args):
     )
     #scheduler = StepLR(optimizer, args.lr_decay_step, gamma=0.5)
     if args.scheduler == 'reducelr':
-        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, threshold=0.002, min_lr=1e-4)
+        scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.2, patience=10, threshold=0.002, min_lr=1e-4)
     elif args.scheduler == 'cosine':
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=20, eta_min=2e-4)
 
@@ -183,12 +184,14 @@ def train(data_dir, model_dir, args):
 
     best_val_acc = 0
     best_val_score = 0
+    best_age_acc = 0
     best_val_loss = np.inf
     for epoch in range(args.epochs):
         # train loop
         model.train()
         loss_value = 0
         matches = 0
+        figure = None
         for idx, train_batch in enumerate(train_loader):
             inputs, labels = train_batch
             inputs = inputs.to(device)
@@ -198,11 +201,35 @@ def train(data_dir, model_dir, args):
 
             optimizer.zero_grad()
 
-            m_outs, g_outs, a_outs = model(inputs)
-            m_loss = criterion_mask(m_outs, m_labels)
-            g_loss = criterion_gender(g_outs, g_labels)
-            a_loss = criterion_age(a_outs, a_labels)
-            loss = m_loss + g_loss + a_loss
+            ###
+
+
+            if np.random.random()>0.5:                    
+                lam = np.random.beta(5,5)
+                rand_index = torch.randperm(inputs.size()[0]).to(device)
+                m_target_a = m_labels
+                g_target_a = g_labels
+                a_target_a = a_labels
+                m_target_b = m_labels[rand_index]
+                g_target_b = g_labels[rand_index]
+                a_target_b = a_labels[rand_index]
+
+                x1,y1,x2,y2 = rand_bbox(inputs.size(), lam)
+                inputs[:, :, x1:x2, y1:y2] = inputs[rand_index, :, x1:x2, y1:y2]
+                # lam = 1-((x2-x1)*(y2-y1)/(inputs.size()[-1]*inputs.size()[-2]))
+                m_outs, g_outs, a_outs = model(inputs)
+                origin_loss = criterion_mask(m_outs, m_target_a) + criterion_gender(g_outs, g_target_a) + criterion_age(a_outs, a_target_a)
+                crop_loss = criterion_mask(m_outs, m_target_b) + criterion_gender(g_outs, g_target_b) + criterion_age(a_outs, a_target_b)
+                loss = origin_loss*(1-lam) + crop_loss*lam
+                
+            else:
+                m_outs, g_outs, a_outs = model(inputs)
+                m_loss = criterion_mask(m_outs, m_labels)
+                g_loss = criterion_gender(g_outs, g_labels)
+                a_loss = criterion_age(a_outs, a_labels)
+                loss = m_loss + g_loss + a_loss
+                
+                
             loss.backward()
             optimizer.step()
 
@@ -213,23 +240,31 @@ def train(data_dir, model_dir, args):
                 a_preds = torch.argmax(a_outs, dim=-1)
                 preds = label_encoder(m_preds, g_preds, a_preds)
                 labels = label_encoder(m_labels, g_labels.squeeze(), a_labels)
-                matches += (preds == labels).sum().item()
+                # matches += (preds == labels).sum().item()
 
             if (idx + 1) % args.log_interval == 0:
                 train_loss = loss_value / args.log_interval
-                train_acc = matches / args.batch_size / args.log_interval
+                # train_acc = matches / args.batch_size / args.log_interval
                 current_lr = get_lr(optimizer)
                 print(
                     f"Epoch[{epoch}/{args.epochs}]({idx + 1}/{len(train_loader)}) || "
-                    f"training loss {train_loss:4.4} || training accuracy {train_acc:4.2%} || lr {current_lr}"
+                    f"training loss {train_loss:4.4} || lr {current_lr}"
                 )
                 logger.add_scalar("Train/loss", train_loss, epoch * len(train_loader) + idx)
-                logger.add_scalar("Train/accuracy", train_acc, epoch * len(train_loader) + idx)
+                # logger.add_scalar("Train/accuracy", train_acc, epoch * len(train_loader) + idx)
 
                 loss_value = 0
                 matches = 0
 
-        #scheduler.step()
+        #     if figure is None:
+        #         inputs_np = torch.clone(inputs).detach().cpu().permute(0, 2, 3, 1).numpy()
+        #         inputs_np = denormalize_image(inputs_np, train_transform.mean, train_transform.std)
+        #         figure = grid_image(
+        #             inputs_np, labels, preds, n=16, shuffle=args.dataset != "MaskSplitByProfileDataset"
+        #         )
+        #     logger.add_figure("Train/results", figure, epoch)
+
+        # #scheduler.step()
 
         # val loop
         with torch.no_grad():
@@ -237,9 +272,14 @@ def train(data_dir, model_dir, args):
             model.eval()
             val_loss_items = []
             val_acc_items = []
+            val_age_acc_items = []
             val_predicts = torch.empty(0)
             val_targets = torch.empty(0)
             figure = None
+
+            fail_inputs = []
+            fail_labels = []
+            fail_preds = []
 
             for val_batch in val_loader:
                 inputs, labels = val_batch
@@ -266,21 +306,36 @@ def train(data_dir, model_dir, args):
                 val_loss_items.append(loss_item)
                 val_acc_items.append(acc_item)
 
-                if figure is None:
-                    inputs_np = torch.clone(inputs).detach().cpu().permute(0, 2, 3, 1).numpy()
-                    inputs_np = denormalize_image(inputs_np, val_transform.mean, val_transform.std)
-                    figure = grid_image(
-                        inputs_np, labels, preds, n=16, shuffle=args.dataset != "MaskSplitByProfileDataset"
-                    )
+                fail_inds = torch.where(labels != preds)[0]
+                fail_inputs.append(torch.clone(inputs[fail_inds]).detach().cpu().permute(0,2,3,1).numpy())
+                fail_labels.extend(labels[fail_inds])
+                fail_preds.extend(preds[fail_inds])
+
+                age_acc_items = (a_labels.cpu()== a_preds.cpu()).sum().item()
+                val_age_acc_items.append(age_acc_items)
+                
+                
+
+            if figure is None:
+                # inputs_np = torch.clone(inputs).detach().cpu().permute(0, 2, 3, 1).numpy()
+                inputs_np = np.concatenate(fail_inputs)
+                inputs_np = denormalize_image(inputs_np, val_transform.mean, val_transform.std)
+                figure = grid_image(
+                    inputs_np, fail_labels, fail_preds, n=16, shuffle=args.dataset != "MaskSplitByProfileDataset"
+                )
 
             val_loss = np.sum(val_loss_items) / len(val_loader)
             val_acc = np.sum(val_acc_items) / len(val_set)
+            val_age_acc = np.sum(val_age_acc_items) / len(val_set)
             best_val_loss = min(best_val_loss, val_loss)
             if val_acc > best_val_acc:
                 print(f"New best model for val accuracy : {val_acc:4.2%}! saving the best model..")
                 torch.save(model.module.state_dict(), f"{save_dir}/best_acc.pth")
                 best_val_acc = val_acc
             torch.save(model.module.state_dict(), f"{save_dir}/last.pth")
+
+            if val_age_acc > best_age_acc:
+                best_age_acc = val_age_acc 
 
 
             ### print f1_score
@@ -292,17 +347,18 @@ def train(data_dir, model_dir, args):
                 best_val_score = val_score
             torch.save(model.module.state_dict(), f"{save_dir}/last.pth")
             print(
-                f"[Val] acc : {val_acc:4.2%}, loss: {val_loss:4.2} || "
-                f"best score : {best_val_score:4.2%}, best acc : {best_val_acc:4.2%}, best loss: {best_val_loss:4.2}"
+                f"[Val] acc : {val_acc:4.2%}, loss: {val_loss:4.2}, age acc: {val_age_acc:4.2%} || "
+                f"best score : {best_val_score:4.2%}, best acc : {best_val_acc:4.2%}, best loss: {best_val_loss:4.2}, best age acc: {best_age_acc:4.2}"
             )
             logger.add_scalar("Val/loss", val_loss, epoch)
             logger.add_scalar("Val/accuracy", val_acc, epoch)
             logger.add_scalar("Val/f1_score", val_score, epoch)
+            logger.add_scalar("Val/age_accuracy", val_age_acc, epoch)
             logger.add_figure("results", figure, epoch)
             print()
 
         if args.scheduler == 'reducelr':
-            scheduler.step(torch.tensor(val_loss))
+            scheduler.step(torch.tensor(val_acc))
         elif args.scheduler == 'cosine':
             scheduler.step()
 
@@ -312,8 +368,6 @@ if __name__ == '__main__':
     from dotenv import load_dotenv
     import os
     load_dotenv(verbose=True)
-
-
 
     # Data and model checkpoints directories
     parser.add_argument('--seed', type=int, default=1997, help='random seed (default: 42)')
@@ -338,7 +392,7 @@ if __name__ == '__main__':
 
     # Dataset
     parser.add_argument('--n_splits', type=int, default=5, help='number for K-Fold validation')
-    parser.add_argument('--k_index', type=int, help='number of K-Fold validation')
+    parser.add_argument('--k_index', type=int, default=2, help='number of K-Fold validation')
 
     # Container environment
     parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/crop_images'))
@@ -348,12 +402,9 @@ if __name__ == '__main__':
     parser.add_argument('--drop_size', type=int, default=32, help='aug drop size')
     args = parser.parse_args()
     print(args)
-    
+
+
     data_dir = args.data_dir
     model_dir = args.model_dir
-
-    if not os.path.isdir(model_dir):
-        os.makedirs(model_dir)
-
 
     train(data_dir, model_dir, args)

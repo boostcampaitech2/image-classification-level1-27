@@ -10,6 +10,7 @@ import re
 from importlib import import_module
 from pathlib import Path
 
+import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -86,6 +87,21 @@ def increment_path(path, exist_ok=False):
         return f"{path}{n}"
 
 
+
+
+T1 = 0
+T2 = 100
+af = 1
+
+def alpha_weight(step):
+    if step < T1:
+        return 0.0
+    elif step > T2:
+        return af
+
+
+
+
 def train(data_dir, model_dir, args):
     seed_everything(args.seed)
 
@@ -111,6 +127,19 @@ def train(data_dir, model_dir, args):
         train=False
     )
 
+
+    img_root = os.path.join('/opt/ml/input/data/eval', 'crop_images')
+    info_path = os.path.join('/opt/ml/input/data/eval', 'info.csv')
+    info = pd.read_csv(info_path)
+    img_paths = [os.path.join(img_root, img_id) for img_id in info.ImageID]
+
+    test_dataset_module = getattr(import_module("dataset"), 'CustomTestDataset')
+    test_set = test_dataset_module(
+        data_path = img_paths,
+        train=False
+    )
+
+
     # -- augmentation
     # transform_module = getattr(import_module("dataset"), args.augmentation)  # default: BaseAugmentation
     # transform = transform_module(
@@ -127,18 +156,20 @@ def train(data_dir, model_dir, args):
     )
     train_set.set_transform(train_transform)    
     val_set.set_transform(val_transform)
-
+    test_set.set_transform(val_transform)
     # -- data_loader
     # train_set, val_set = dataset.split_dataset()
 
     train_loader = DataLoader(
         train_set,
-        batch_size=args.batch_size,
+        batch_size=args.batch_size//2,
         num_workers=multiprocessing.cpu_count()//2,
         shuffle=True,
         pin_memory=use_cuda,
         drop_last=True,
     )
+
+    
 
     val_loader = DataLoader(
         val_set,
@@ -146,9 +177,17 @@ def train(data_dir, model_dir, args):
         num_workers=multiprocessing.cpu_count()//2,
         shuffle=False,
         pin_memory=use_cuda,
-        drop_last=True,
+        drop_last=False,
     )
 
+    test_loader = DataLoader(
+        test_set,
+        batch_size=args.batch_size//2,
+        num_workers=multiprocessing.cpu_count()//2,
+        shuffle=True,
+        pin_memory=use_cuda,
+        drop_last=True,
+    )
     # -- model
     model_module = getattr(import_module("model"), args.model)  # default: BaseModel
     # model = model_module(
@@ -156,6 +195,7 @@ def train(data_dir, model_dir, args):
     # ).to(device)
     model = model_module(
     ).to(device)
+    model.load_state_dict(torch.load("./model/pseudo_label/last.pth", map_location=device))
     model = torch.nn.DataParallel(model)
 
     # -- loss & metric
@@ -167,7 +207,7 @@ def train(data_dir, model_dir, args):
     opt_module = getattr(import_module("torch.optim"), args.optimizer)  # default: SGD
     optimizer = opt_module(
         filter(lambda p: p.requires_grad, model.parameters()),
-        lr=args.lr,
+        lr=args.lr/4,
         #weight_decay=5e-4d
     )
     #scheduler = StepLR(optimizer, args.lr_decay_step, gamma=0.5)
@@ -184,12 +224,27 @@ def train(data_dir, model_dir, args):
     best_val_acc = 0
     best_val_score = 0
     best_val_loss = np.inf
+    step = 0
     for epoch in range(args.epochs):
         # train loop
         model.train()
         loss_value = 0
         matches = 0
-        for idx, train_batch in enumerate(train_loader):
+        
+        for idx, (train_batch, test_batch) in enumerate(zip(train_loader, test_loader)):
+
+            model.eval()
+            test_inputs = test_batch
+            test_inputs = test_inputs.to(device)
+            outputs_unlabeled = model(test_inputs)
+            t_m_labels = torch.argmax(outputs_unlabeled[0], dim=-1)
+            t_g_labels = (outputs_unlabeled[1]>0).type(torch.float32)
+            t_a_labels = torch.argmax(outputs_unlabeled[2], dim=-1)
+
+            model.train()
+
+            
+
             inputs, labels = train_batch
             inputs = inputs.to(device)
             m_labels = labels['mask'].to(device)
@@ -197,12 +252,25 @@ def train(data_dir, model_dir, args):
             a_labels = labels['age'].to(device)
 
             optimizer.zero_grad()
+            
+            t_m_outs, t_g_outs, t_a_outs = model(test_inputs)
+            t_m_loss = criterion_mask(t_m_outs, t_m_labels)
+            t_g_loss = criterion_gender(t_g_outs, t_g_labels)
+            t_a_loss = criterion_age(t_a_outs, t_a_labels)
+            t_loss = t_m_loss + t_g_loss + t_a_loss
 
             m_outs, g_outs, a_outs = model(inputs)
             m_loss = criterion_mask(m_outs, m_labels)
             g_loss = criterion_gender(g_outs, g_labels)
             a_loss = criterion_age(a_outs, a_labels)
-            loss = m_loss + g_loss + a_loss
+            o_loss = m_loss + g_loss + a_loss
+
+            loss = o_loss + t_loss*af
+            if (idx+1)%50 == 0:
+                step += 1
+                if step%10 == 0:
+                    print(f"STEP {step}")
+
             loss.backward()
             optimizer.step()
 

@@ -15,7 +15,7 @@ import numpy as np
 import torch
 from torch import optim
 from torch.optim.lr_scheduler import *
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from torch.utils.tensorboard import SummaryWriter
 
 from dataset import MaskBaseDataset
@@ -130,14 +130,22 @@ def train(data_dir, model_dir, args):
 
     # -- data_loader
     # train_set, val_set = dataset.split_dataset()
+    
+    class_weights_all = train_set.class_weight
+
+    weighted_sampler = WeightedRandomSampler(
+        weights=class_weights_all,
+        num_samples=len(class_weights_all),
+        replacement=True
+    )
 
     train_loader = DataLoader(
         train_set,
         batch_size=args.batch_size,
         num_workers=multiprocessing.cpu_count()//2,
-        shuffle=True,
+        sampler= weighted_sampler,
+        shuffle=False,
         pin_memory=use_cuda,
-        drop_last=True,
     )
 
     val_loader = DataLoader(
