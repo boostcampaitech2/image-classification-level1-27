@@ -1,21 +1,19 @@
 import argparse
 import os
 from importlib import import_module
-import multiprocessing
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
-from dataset import TestDataset, MaskBaseDataset
-
 from utils import *
+from transform import get_tta_transform
 
 
 def load_model(saved_model, device):
     model_module = getattr(import_module("model"), args.model)  # default: BaseModel
     model = model_module(
     ).to(device)
-    model_path = os.path.join(saved_model, 'best.pth')
+    model_path = os.path.join(saved_model, 'best_score.pth')
     model.load_state_dict(torch.load(model_path, map_location=device))
 
     return model
@@ -28,7 +26,7 @@ def inference(data_dir, model_dir, output_dir, args):
     model = load_model(model_dir, device).to(device)
     
     model.eval()
-    img_root = os.path.join(data_dir, 'images')
+    img_root = os.path.join(data_dir, 'crop_images')
     info_path = os.path.join(data_dir, 'info.csv')
     info = pd.read_csv(info_path)
     img_paths = [os.path.join(img_root, img_id) for img_id in info.ImageID]
@@ -38,7 +36,7 @@ def inference(data_dir, model_dir, output_dir, args):
     
     test_set = dataset_module(
         data_path = img_paths,
-        train=False)
+        )
 
     transform_module = getattr(import_module("transform"), args.augmentation)  # default: BaseAugmentation
 
@@ -51,29 +49,38 @@ def inference(data_dir, model_dir, output_dir, args):
     loader = DataLoader(
         test_set,
         batch_size=args.batch_size,
-        num_workers=multiprocessing.cpu_count()//2,
+        num_workers=1,
         shuffle=False,
         pin_memory=use_cuda,
         drop_last=False,
     )
 
+    # --- get_tta_transform \ default : [horizontal_flip,]
+    tta_transforms = get_tta_transform()
+
+
     print("Calculating inference results..")
-    preds = []
+    predictions = []
     with torch.no_grad():
-        for idx, images in enumerate(loader):
+        for images in loader:
+            tta_soft_voting = []    
             images = images.to(device)
-            # pred = model(images)
+            origin_output = model(images)
+            origin_vote = nn.functional.softmax(origin_output, -1)
+            tta_soft_voting.append(origin_vote)
 
-            m_outs, g_outs, a_outs = model(images)
-            m_preds = torch.argmax(m_outs, dim=-1).cpu()
-            g_preds = (g_outs>0).squeeze().cpu()
-            a_preds = torch.argmax(a_outs, dim=-1).cpu()
-            pred = label_encoder(m_preds, g_preds, a_preds)
+            for transform in tta_transforms:
+                tta_images = transform.augment_image(images)
+                tta_output = model(tta_images)
+                tta_vote = nn.functional.softmax(tta_output, -1)
+                tta_soft_voting.append(tta_vote)
             
-            # pred = pred.argmax(dim=-1)
-            preds.extend(pred.cpu().numpy())
+            tta_soft_voting = torch.stack(tta_soft_voting).mean(0)
 
-    info['ans'] = preds
+            tta_predict = tta_soft_voting.argmax(dim=-1)        
+            predictions.extend(tta_predict.cpu().numpy())
+
+    info['ans'] = predictions
     info.to_csv(os.path.join(output_dir, f'output.csv'), index=False)
     print(f'Inference Done!')
 
@@ -82,14 +89,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # Data and model checkpoints directories
-    parser.add_argument('--dataset', type=str, default='CustomTestDataset', help='dataset augmentation type (default: CustomDataset)')
-    parser.add_argument('--batch_size', type=int, default=16, help='input batch size for validing (default: 1000)')
-    parser.add_argument('--model', type=str, default='CustomModel', help='model type (default: BaseModel)')
-    parser.add_argument('--resize', type=tuple, default=(512, 384), help='resize size for image when you trained (default: (96, 128))')
-    parser.add_argument('--augmentation', type=str, default='BaseAugmentation', help='data augmentation type (default: BaseAugmentation)')    
+    parser.add_argument('--dataset', type=str, default='CustomTestDataset', help='dataset augmentation type (default: CustomTestDataset)')
+    parser.add_argument('--batch_size', type=int, default=64, help='input batch size for validing (default: 64)')
+    parser.add_argument('--model', type=str, default='CustomModel_Arc', help='model type (default: CustomModel_Arc)')
+    parser.add_argument('--augmentation', type=str, default='Augmentation_384', help='data augmentation type (default: Augmentation_384)')    
     # Container environment
     parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_EVAL', '/opt/ml/input/data/eval'))
-    parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_CHANNEL_MODEL', '/opt/ml/model/exp8'))  # modified by ihyun
+    parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_CHANNEL_MODEL', './model/best'))  # modified by ihyun
     parser.add_argument('--output_dir', type=str, default=os.environ.get('SM_OUTPUT_DATA_DIR', '/opt/ml/output'))
 
     args = parser.parse_args()
@@ -97,6 +103,10 @@ if __name__ == '__main__':
     data_dir = args.data_dir
     model_dir = args.model_dir
     output_dir = args.output_dir
+
+    if not os.path.isdir('/opt/ml/input/data/train/crop_images/') or not os.path.isdir('/opt/ml/input/data/eval/crop_images/'):
+        from create_crop_images import create_crop_images
+        create_crop_images()
 
     os.makedirs(output_dir, exist_ok=True)
 

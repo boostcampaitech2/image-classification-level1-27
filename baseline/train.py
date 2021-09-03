@@ -1,7 +1,8 @@
+# python [train.py](http://train.py/) --name baseline_augpp --model CustomModel --augmentation Augmentation_384 --lr 3e-3  —k_index 999
+
 import argparse
 import glob
 import json
-import multiprocessing
 import os
 import random
 import re
@@ -11,11 +12,11 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from torch.optim.lr_scheduler import StepLR
+from torch import optim
+from torch.optim.lr_scheduler import *
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from dataset import MaskBaseDataset
 from loss import create_criterion
 from utils import *
 
@@ -38,7 +39,7 @@ def grid_image(np_images, gts, preds, n=16, shuffle=False):
     batch_size = np_images.shape[0]
     assert n <= batch_size
 
-    choices = random.choices(range(batch_size), k=n) if shuffle else list(range(n))
+    choices = random.sample(range(batch_size), k=n) if shuffle else list(range(n))
     figure = plt.figure(figsize=(12, 18 + 2))  # cautions: hardcoded, 이미지 크기에 따라 figsize 를 조정해야 할 수 있습니다. T.T
     plt.subplots_adjust(top=0.8)               # cautions: hardcoded, 이미지 크기에 따라 top 를 조정해야 할 수 있습니다. T.T
     n_grid = np.ceil(n ** 0.5)
@@ -47,9 +48,8 @@ def grid_image(np_images, gts, preds, n=16, shuffle=False):
         gt = gts[choice].item()
         pred = preds[choice].item()
         image = np_images[choice]
-        # title = f"gt: {gt}, pred: {pred}"
-        gt_decoded_labels = MaskBaseDataset.decode_multi_class(gt)
-        pred_decoded_labels = MaskBaseDataset.decode_multi_class(pred)
+        gt_decoded_labels = label_decoder(gt)
+        pred_decoded_labels = label_decoder(pred)
         title = "\n".join([
             f"{task} - gt: {gt_label}, pred: {pred_label}"
             for gt_label, pred_label, task
@@ -83,10 +83,9 @@ def increment_path(path, exist_ok=False):
         return f"{path}{n}"
 
 
-def train(data_dir, model_dir, args):
-    #create model dir
-    createFolder(model_dir)
-
+def train(model_dir, args):
+    
+    # -- seed 고정
     seed_everything(args.seed)
 
     save_dir = increment_path(os.path.join(model_dir, args.name))
@@ -96,12 +95,7 @@ def train(data_dir, model_dir, args):
     device = torch.device("cuda" if use_cuda else "cpu")
 
     # -- dataset
-    dataset_module = getattr(import_module("dataset"), args.dataset)  # default: BaseAugmentation
-    # dataset = dataset_module(
-    #     data_dir=data_dir,
-    #     info_path=args.info_path
-    # )
-    # num_classes = dataset.num_classes  # 18
+    dataset_module = getattr(import_module("dataset"), args.dataset)  # default: CustomDataset
     train_set = dataset_module(
         args=args,
         train=True
@@ -111,14 +105,8 @@ def train(data_dir, model_dir, args):
         train=False
     )
 
-    # -- augmentation
-    # transform_module = getattr(import_module("dataset"), args.augmentation)  # default: BaseAugmentation
-    # transform = transform_module(
-    #     resize=args.resize,
-    #     mean=dataset.mean,
-    #     std=dataset.std,
-    # )
-    transform_module = getattr(import_module("transform"), args.augmentation)  # default: BaseAugmentation
+    # -- augmentation 
+    transform_module = getattr(import_module("transform"), args.augmentation)  # default: Augmentation_384
     train_transform = transform_module(
         train=True
     )    
@@ -134,43 +122,50 @@ def train(data_dir, model_dir, args):
     train_loader = DataLoader(
         train_set,
         batch_size=args.batch_size,
-        num_workers=multiprocessing.cpu_count()//2,
+        num_workers=3,
         shuffle=True,
         pin_memory=use_cuda,
         drop_last=True,
-    )
+    ) 
 
     val_loader = DataLoader(
         val_set,
         batch_size=args.valid_batch_size,
-        num_workers=multiprocessing.cpu_count()//2,
+        num_workers=3,
         shuffle=False,
         pin_memory=use_cuda,
-        drop_last=True,
+        drop_last=False,
     )
 
     # -- model
     model_module = getattr(import_module("model"), args.model)  # default: BaseModel
-    # model = model_module(
-    #     num_classes=num_classes
-    # ).to(device)
-    model = model_module(
-    ).to(device)
+
+    if args.model =='CustomModel_Arc':
+        model = model_module(
+            s = args.s,
+            m = args.m
+        ).to(device)
+    else:
+        model = model_module().to(device)
+
     model = torch.nn.DataParallel(model)
 
+
     # -- loss & metric
-    # criterion = create_criterion(args.criterion)  # default: cross_entropy
-    criterion_mask = create_criterion(args.criterion_mask)  # default: cross_entropy
-    criterion_gender = create_criterion(args.criterion_gender)  # default: bce_loss
-    criterion_age = create_criterion(args.criterion_age)  # default: cross_entropy
+    criterion = create_criterion(args.criterion)  # default: focal_loss
 
     opt_module = getattr(import_module("torch.optim"), args.optimizer)  # default: SGD
     optimizer = opt_module(
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=args.lr,
-        weight_decay=5e-4
+        momentum= 0.9,
+        weight_decay=5e-4,
     )
-    scheduler = StepLR(optimizer, args.lr_decay_step, gamma=0.5)
+    #scheduler = StepLR(optimizer, args.lr_decay_step, gamma=0.5)
+    if args.scheduler == 'reducelr':
+        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, threshold=0.002, min_lr=1e-4)
+    elif args.scheduler == 'cosine':
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10, eta_min=1e-4)
 
     # -- logging
     logger = SummaryWriter(log_dir=save_dir)
@@ -178,6 +173,7 @@ def train(data_dir, model_dir, args):
         json.dump(vars(args), f, ensure_ascii=False, indent=4)
 
     best_val_acc = 0
+    best_val_score = 0
     best_val_loss = np.inf
     for epoch in range(args.epochs):
         # train loop
@@ -187,44 +183,35 @@ def train(data_dir, model_dir, args):
         for idx, train_batch in enumerate(train_loader):
             inputs, labels = train_batch
             inputs = inputs.to(device)
-            m_labels = labels['mask'].to(device)
-            g_labels = labels['gender'].to(device)
-            a_labels = labels['age'].to(device)
+            labels = labels.to(device)
 
             optimizer.zero_grad()
 
-            m_outs, g_outs, a_outs = model(inputs)
-            m_loss = criterion_mask(m_outs, m_labels)
-            g_loss = criterion_gender(g_outs, g_labels)
-            a_loss = criterion_age(a_outs, a_labels)
-            loss = m_loss + g_loss + a_loss
+            outs = model(inputs, labels)
+            loss = criterion(outs, labels)
             loss.backward()
             optimizer.step()
-
             loss_value += loss.item()
-            with torch.no_grad():
-                m_preds = torch.argmax(m_outs, dim=-1)
-                g_preds = (g_outs>0).squeeze()
-                a_preds = torch.argmax(a_outs, dim=-1)
-                preds = label_encoder(m_preds, g_preds, a_preds)
-                labels = label_encoder(m_labels, g_labels.squeeze(), a_labels)
-                matches += (preds == labels).sum().item()
 
-            if (idx + 1) % args.log_interval == 0:
-                train_loss = loss_value / args.log_interval
-                train_acc = matches / args.batch_size / args.log_interval
-                current_lr = get_lr(optimizer)
-                print(
-                    f"Epoch[{epoch}/{args.epochs}]({idx + 1}/{len(train_loader)}) || "
-                    f"training loss {train_loss:4.4} || training accuracy {train_acc:4.2%} || lr {current_lr}"
-                )
-                logger.add_scalar("Train/loss", train_loss, epoch * len(train_loader) + idx)
-                logger.add_scalar("Train/accuracy", train_acc, epoch * len(train_loader) + idx)
 
-                loss_value = 0
-                matches = 0
+            # train log
+            if (idx + 1) % args.log_interval == 0: 
+                with torch.no_grad():
+                    preds = torch.argmax(outs, dim=-1)
+                    matches += (preds == labels).sum().item()
+                    train_loss = loss_value / args.log_interval
+                    train_acc = matches / args.batch_size / args.log_interval
+                    current_lr = get_lr(optimizer)
+                    print(
+                        f"Epoch[{epoch}/{args.epochs}]({idx + 1}/{len(train_loader)}) || "
+                        f"training loss {train_loss:4.4} || training accuracy {train_acc:4.2%} || lr {current_lr}"
+                    )
+                    logger.add_scalar("Train/loss", train_loss, epoch * len(train_loader) + idx)
+                    logger.add_scalar("Train/accuracy", train_acc, epoch * len(train_loader) + idx)
 
-        scheduler.step()
+                    loss_value = 0
+                    matches = 0
+
 
         # val loop
         with torch.no_grad():
@@ -239,26 +226,18 @@ def train(data_dir, model_dir, args):
             for val_batch in val_loader:
                 inputs, labels = val_batch
                 inputs = inputs.to(device)
-                m_labels = labels['mask'].to(device)
-                g_labels = labels['gender'].to(device)
-                a_labels = labels['age'].to(device)
+                labels = labels.to(device)
+
 
                 ### update val_predicts & val_targets
-                m_outs, g_outs, a_outs = model(inputs)
-                m_preds = torch.argmax(m_outs, dim=-1).cpu()
-                g_preds = (g_outs>0).squeeze().cpu()
-                a_preds = torch.argmax(a_outs, dim=-1).cpu()
-                preds = label_encoder(m_preds, g_preds, a_preds)
-                labels = label_encoder(m_labels.cpu(), g_labels.cpu().squeeze(), a_labels.cpu())
-                val_predicts = torch.cat((val_predicts,preds))
-                val_targets = torch.cat((val_targets,labels))
+                outs = model(inputs)
+                preds = torch.argmax(outs, dim=-1)
+                val_predicts = torch.cat((val_predicts,preds.cpu()))
+                val_targets = torch.cat((val_targets,labels.cpu()))
 
-                m_loss = criterion_mask(m_outs, m_labels).item()
-                g_loss = criterion_gender(g_outs, g_labels).item()
-                a_loss = criterion_age(a_outs, a_labels).item()
-                loss_item = (m_loss + g_loss + a_loss)
+                loss = criterion(outs, labels).item()
                 acc_item = (labels == preds).sum().item()
-                val_loss_items.append(loss_item)
+                val_loss_items.append(loss)
                 val_acc_items.append(acc_item)
 
                 if figure is None:
@@ -273,23 +252,34 @@ def train(data_dir, model_dir, args):
             best_val_loss = min(best_val_loss, val_loss)
             if val_acc > best_val_acc:
                 print(f"New best model for val accuracy : {val_acc:4.2%}! saving the best model..")
-                torch.save(model.module.state_dict(), f"{save_dir}/best.pth")
+                torch.save(model.module.state_dict(), f"{save_dir}/best_acc.pth")
                 best_val_acc = val_acc
             torch.save(model.module.state_dict(), f"{save_dir}/last.pth")
-            print(
-                f"[Val] acc : {val_acc:4.2%}, loss: {val_loss:4.2} || "
-                f"best acc : {best_val_acc:4.2%}, best loss: {best_val_loss:4.2}"
-            )
+
 
             ### print f1_score
             score = get_f1_score(val_targets, val_predicts, verbose=True)
-
+            val_score = score['total']
+            if val_score > best_val_score:
+                print(f"New best model for f1 score : {val_score:4.2}! saving the best model..")
+                torch.save(model.module.state_dict(), f"{save_dir}/best_score.pth")
+                best_val_score = val_score
+            torch.save(model.module.state_dict(), f"{save_dir}/last.pth")
+            print(
+                f"[Val] acc : {val_acc:4.2%}, loss: {val_loss:4.2} || "
+                f"best score : {best_val_score:4.2%}, best acc : {best_val_acc:4.2%}, best loss: {best_val_loss:4.2}"
+            )
             logger.add_scalar("Val/loss", val_loss, epoch)
             logger.add_scalar("Val/accuracy", val_acc, epoch)
-            logger.add_scalar("Val/f1_score", score['total'], epoch)
+            logger.add_scalar("Val/f1_score", val_score, epoch)
             logger.add_figure("results", figure, epoch)
             print()
 
+        # --- lr scheduler
+        if args.scheduler == 'reducelr':
+            scheduler.step(torch.tensor(val_loss))
+        elif args.scheduler == 'cosine':
+            scheduler.step()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -298,38 +288,47 @@ if __name__ == '__main__':
     import os
     load_dotenv(verbose=True)
 
+
+
     # Data and model checkpoints directories
     parser.add_argument('--seed', type=int, default=1997, help='random seed (default: 42)')
-    parser.add_argument('--epochs', type=int, default=30, help='number of epochs to train (default: 1)')
+    parser.add_argument('--epochs', type=int, default=40, help='number of epochs to train (default: 1)')
     parser.add_argument('--dataset', type=str, default='CustomDataset', help='dataset augmentation type (default: MaskBaseDataset)')
-    parser.add_argument('--augmentation', type=str, default='BaseAugmentation', help='data augmentation type (default: BaseAugmentation)')
-    # parser.add_argument("--resize", nargs="+", type=list, default=[128, 96], help='resize size for image when training')
-    parser.add_argument('--batch_size', type=int, default=32, help='input batch size for training (default: 64)')
+    parser.add_argument('--augmentation', type=str, default='Augmentation_384', help='data augmentation type (default: BaseAugmentation)')
+    parser.add_argument('--batch_size', type=int, default=128, help='input batch size for training (default: 64)')
     parser.add_argument('--valid_batch_size', type=int, default=32, help='input batch size for validing (default: 1000)')
-    parser.add_argument('--model', type=str, default='CustomModel', help='model type (default: BaseModel)')
-    parser.add_argument('--optimizer', type=str, default='Adam', help='optimizer type (default: SGD)')
-    parser.add_argument('--lr', type=float, default=1e-3, help='learning rate (default: 1e-3)')
-    parser.add_argument('--val_ratio', type=float, default=0.2, help='ratio for validaton (default: 0.2)')
-    # parser.add_argument('--criterion', type=str, default='cross_entropy', help='criterion type (default: cross_entropy)')
-    parser.add_argument('--criterion_mask', type=str, default='cross_entropy', help='criterion_mask type (default: cross_entropy)')
-    parser.add_argument('--criterion_gender', type=str, default='bce_loss', help='criterion_gender type (default: bce_loss)')
-    parser.add_argument('--criterion_age', type=str, default='cross_entropy', help='criterion_age type (default: cross_entropy)')
+    parser.add_argument('--model', type=str, default='CustomModel_Arc', help='model type (default: BaseModel)')
+    parser.add_argument('--optimizer', type=str, default='SGD', help='optimizer type (default: SGD)')
+    parser.add_argument('--scheduler', type=str, default='reducelr', help='scheduler type (default: reducelr)')
+    parser.add_argument('--lr', type=float, default=3e-3, help='learning rate (default: 1e-3)')
+    parser.add_argument('--criterion', type=str, default='focal', help='criterion type (default: cross_entropy)')
     parser.add_argument('--lr_decay_step', type=int, default=20, help='learning rate scheduler deacy step (default: 20)')
     parser.add_argument('--log_interval', type=int, default=20, help='how many batches to wait before logging training status')
-    parser.add_argument('--name', default='exp', help='model save at {SM_MODEL_DIR}/{name}')
+    parser.add_argument('--name', default='resnet18_arc', help='model save at {SM_MODEL_DIR}/{name}')
 
     # Dataset
     parser.add_argument('--n_splits', type=int, default=5, help='number for K-Fold validation')
+    parser.add_argument('--k_index', type=int, default=4, help='number of K-Fold validation')
 
     # Container environment
-    parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/images'))
-    parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_MODEL_DIR', '/opt/ml/model'))
+    parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/crop_images'))
+    parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_MODEL_DIR', './model'))
     parser.add_argument('--info_path', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/train.csv'))
+
+    parser.add_argument('--s', type=float, default=30.0, help='aug drop size')
+    parser.add_argument('--m', type=float, default=0.4, help='aug drop size')
 
     args = parser.parse_args()
     print(args)
-
-    data_dir = args.data_dir
+    
     model_dir = args.model_dir
 
-    train(data_dir, model_dir, args)
+    if not os.path.isdir(model_dir):
+        os.makedirs(model_dir)
+
+    if not os.path.isdir('/opt/ml/input/data/train/crop_images/') or not os.path.isdir('/opt/ml/input/data/eval/crop_images/'):
+        from create_crop_images import create_crop_images
+        create_crop_images()
+
+
+    train(model_dir, args)
