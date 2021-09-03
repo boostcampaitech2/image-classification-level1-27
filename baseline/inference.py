@@ -1,14 +1,12 @@
 import argparse
 import os
 from importlib import import_module
-import multiprocessing
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
-from dataset import  MaskBaseDataset
-
 from utils import *
+from transform import get_tta_transform
 
 
 def load_model(saved_model, device):
@@ -57,20 +55,32 @@ def inference(data_dir, model_dir, output_dir, args):
         drop_last=False,
     )
 
+    # --- get_tta_transform \ default : [horizontal_flip,]
+    tta_transforms = get_tta_transform()
+
+
     print("Calculating inference results..")
-    preds = []
+    predictions = []
     with torch.no_grad():
-        for idx, images in enumerate(loader):
+        for images in loader:
+            tta_soft_voting = []    
             images = images.to(device)
-            # pred = model(images)
+            origin_output = model(images)
+            origin_vote = nn.functional.softmax(origin_output, -1)
+            tta_soft_voting.append(origin_vote)
 
-            outs = model(images)
-            pred = torch.argmax(outs, dim=-1).cpu()
+            for transform in tta_transforms:
+                tta_images = transform.augment_image(images)
+                tta_output = model(tta_images)
+                tta_vote = nn.functional.softmax(tta_output, -1)
+                tta_soft_voting.append(tta_vote)
             
-            # pred = pred.argmax(dim=-1)
-            preds.extend(pred.cpu().numpy())
+            tta_soft_voting = torch.stack(tta_soft_voting).mean(0)
 
-    info['ans'] = preds
+            tta_predict = tta_soft_voting.argmax(dim=-1)        
+            predictions.extend(tta_predict.cpu().numpy())
+
+    info['ans'] = predictions
     info.to_csv(os.path.join(output_dir, f'output.csv'), index=False)
     print(f'Inference Done!')
 
@@ -79,14 +89,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # Data and model checkpoints directories
-    parser.add_argument('--dataset', type=str, default='CustomTestDataset', help='dataset augmentation type (default: CustomDataset)')
-    parser.add_argument('--batch_size', type=int, default=64, help='input batch size for validing (default: 1000)')
-    parser.add_argument('--model', type=str, default='CustomModel_Arc', help='model type (default: BaseModel)')
-    parser.add_argument('--resize', type=tuple, default=(384, 288), help='resize size for image when you trained (default: (96, 128))')
-    parser.add_argument('--augmentation', type=str, default='Augmentation_384', help='data augmentation type (default: BaseAugmentation)')    
+    parser.add_argument('--dataset', type=str, default='CustomTestDataset', help='dataset augmentation type (default: CustomTestDataset)')
+    parser.add_argument('--batch_size', type=int, default=64, help='input batch size for validing (default: 64)')
+    parser.add_argument('--model', type=str, default='CustomModel_Arc', help='model type (default: CustomModel_Arc)')
+    parser.add_argument('--augmentation', type=str, default='Augmentation_384', help='data augmentation type (default: Augmentation_384)')    
     # Container environment
     parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_EVAL', '/opt/ml/input/data/eval'))
-    parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_CHANNEL_MODEL', './model/arc_face_focal'))  # modified by ihyun
+    parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_CHANNEL_MODEL', './model/best'))  # modified by ihyun
     parser.add_argument('--output_dir', type=str, default=os.environ.get('SM_OUTPUT_DATA_DIR', '/opt/ml/output'))
 
     args = parser.parse_args()
@@ -94,6 +103,10 @@ if __name__ == '__main__':
     data_dir = args.data_dir
     model_dir = args.model_dir
     output_dir = args.output_dir
+
+    if not os.path.isdir('/opt/ml/input/data/train/crop_images/') or not os.path.isdir('/opt/ml/input/data/eval/crop_images/'):
+        from create_crop_images import create_crop_images
+        create_crop_images()
 
     os.makedirs(output_dir, exist_ok=True)
 
