@@ -142,8 +142,8 @@ def train(model_dir, args):
 
     if args.model =='CustomModel_Arc':
         model = model_module(
-            s = args.s,
-            m = args.m
+            scale = args.arc_scale,
+            margin = args.arc_margin
         ).to(device)
     else:
         model = model_module().to(device)
@@ -305,6 +305,8 @@ if __name__ == '__main__':
     parser.add_argument('--lr_decay_step', type=int, default=20, help='learning rate scheduler deacy step (default: 20)')
     parser.add_argument('--log_interval', type=int, default=20, help='how many batches to wait before logging training status (default: 20)')
     parser.add_argument('--name', default='resnet18_arc', help='model save at {SM_MODEL_DIR}/{name}')
+    parser.add_argument('--arc_scale', type=float, default=30.0, help='arcface scale (default: 30.0)')
+    parser.add_argument('--arc_margin', type=float, default=0.4, help='arcface margin (default: 0.4)')
 
     # Dataset
     parser.add_argument('--n_splits', type=int, default=5, help='number for K-Fold validation (default: 5)')
@@ -315,8 +317,6 @@ if __name__ == '__main__':
     parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_MODEL_DIR', './model'))
     parser.add_argument('--info_path', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/train.csv'))
 
-    parser.add_argument('--s', type=float, default=30.0, help='aug drop size (default: 30.0)')
-    parser.add_argument('--m', type=float, default=0.4, help='aug drop size (default: 0.4)')
 
     args = parser.parse_args()
     print(args)

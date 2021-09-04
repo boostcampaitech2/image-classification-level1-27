@@ -67,12 +67,13 @@ python train.py --batch_size 32 --seed 2021 --optimizer Adam --lr 1e-3 ...
 | lr_decay_step   | int         | 20               | learning rate scheduler deacy step |
 | log_interval    | int         | 20               | how many batches to wait before logging training status |
 | name            | str         | resnet18_arc     | dir name for trained model    |
+| arc_scale       | float       | 30.0             | arcface scale                 |
+| arc_margin      | float       | 0.4              | arcface margin                |
 | n_splits        | int         | 5                | number for K-Fold validation  |
 | k_index         | int         | 4                | number of K-Fold validation   |
 | data_dir        | str         | _                | image data path               |
 | model_dir       | str         | _                | model saving path             |
-| arc_scale       | float       | 30.0             | arcface scale                 |
-| arc_margin      | float       | 0.4              | arcface margin                |
+
 
 ### Advanced inference
 ```
