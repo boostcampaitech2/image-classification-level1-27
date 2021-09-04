@@ -8,13 +8,13 @@ import math
 
 # --- imagenet pretrained resnet18 with ArcFace loss
 class CustomModel_Arc(nn.Module):
-    def __init__(self, s=30.0, m=0.5, pretrained=True):
+    def __init__(self, scale=30.0, margin=0.5, pretrained=True):
         super().__init__()
         self.backbone = models.resnet18(pretrained=pretrained)
         in_features = self.backbone.fc.in_features
 
         self.backbone.fc = nn.Identity()
-        self.metric_fc = ArcMarginProduct(in_features, 18, s=s, m=m)
+        self.metric_fc = ArcMarginProduct(in_features, 18, scale=scale, margin=margin)
         self.num_classes = None
 
     def forward(self, x, label=None):
@@ -32,24 +32,24 @@ class ArcMarginProduct(nn.Module):
         Args:
             in_features: size of each input sample
             out_features: size of each output sample
-            s: norm of input feature
-            m: margin
+            scale: norm of input feature
+            margin: margin
             cos(theta + m)
         """
-    def __init__(self, in_features, out_features, s=30.0, m=0.30, easy_margin=False):
+    def __init__(self, in_features, out_features, scale=30.0, margin=0.30, easy_margin=False):
         super(ArcMarginProduct, self).__init__()
         self.in_features = in_features
         self.out_features = out_features
-        self.s = s
-        self.m = m
+        self.scale = scale
+        self.margin = margin
         self.weight = Parameter(torch.FloatTensor(out_features, in_features))
         nn.init.xavier_uniform_(self.weight)
 
         self.easy_margin = easy_margin
-        self.cos_m = math.cos(m)
-        self.sin_m = math.sin(m)
-        self.th = math.cos(math.pi - m)
-        self.mm = math.sin(math.pi - m) * m
+        self.cos_m = math.cos(margin)
+        self.sin_m = math.sin(margin)
+        self.th = math.cos(math.pi - margin)
+        self.mm = math.sin(math.pi - margin) * margin
 
     def forward(self, input, label):
 
@@ -70,7 +70,7 @@ class ArcMarginProduct(nn.Module):
         one_hot.scatter_(1, label.view(-1, 1).long(), 1)
         # -------------torch.where(out_i = {x_i if condition_i else y_i) -------------
         output = (one_hot * phi) + ((1.0 - one_hot) * cosine)  # you can use torch.where if your torch.__version__ is 0.4
-        output *= self.s
+        output *= self.scale
         # print(output)
 
         return output

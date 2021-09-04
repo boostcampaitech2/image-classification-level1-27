@@ -142,8 +142,8 @@ def train(model_dir, args):
 
     if args.model =='CustomModel_Arc':
         model = model_module(
-            s = args.s,
-            m = args.m
+            scale = args.arc_scale,
+            margin = args.arc_margin
         ).to(device)
     else:
         model = model_module().to(device)
@@ -291,32 +291,32 @@ if __name__ == '__main__':
 
 
     # Data and model checkpoints directories
-    parser.add_argument('--seed', type=int, default=1997, help='random seed (default: 42)')
-    parser.add_argument('--epochs', type=int, default=40, help='number of epochs to train (default: 1)')
-    parser.add_argument('--dataset', type=str, default='CustomDataset', help='dataset augmentation type (default: MaskBaseDataset)')
-    parser.add_argument('--augmentation', type=str, default='Augmentation_384', help='data augmentation type (default: BaseAugmentation)')
-    parser.add_argument('--batch_size', type=int, default=128, help='input batch size for training (default: 64)')
-    parser.add_argument('--valid_batch_size', type=int, default=32, help='input batch size for validing (default: 1000)')
-    parser.add_argument('--model', type=str, default='CustomModel_Arc', help='model type (default: BaseModel)')
+    parser.add_argument('--seed', type=int, default=1997, help='random seed (default: 1997)')
+    parser.add_argument('--epochs', type=int, default=40, help='number of epochs to train (default: 40)')
+    parser.add_argument('--dataset', type=str, default='CustomDataset', help='dataset augmentation type (default: CustomDataset)')
+    parser.add_argument('--augmentation', type=str, default='Augmentation_384', help='data augmentation type (default: Augmentation_384)')
+    parser.add_argument('--batch_size', type=int, default=128, help='input batch size for training (default: 128)')
+    parser.add_argument('--valid_batch_size', type=int, default=32, help='input batch size for validing (default: 32)')
+    parser.add_argument('--model', type=str, default='CustomModel_Arc', help='model type (default: CustomModel_Arc)')
     parser.add_argument('--optimizer', type=str, default='SGD', help='optimizer type (default: SGD)')
     parser.add_argument('--scheduler', type=str, default='reducelr', help='scheduler type (default: reducelr)')
-    parser.add_argument('--lr', type=float, default=3e-3, help='learning rate (default: 1e-3)')
-    parser.add_argument('--criterion', type=str, default='focal', help='criterion type (default: cross_entropy)')
+    parser.add_argument('--lr', type=float, default=3e-3, help='learning rate (default: 3e-3)')
+    parser.add_argument('--criterion', type=str, default='focal', help='criterion type (default: focal)')
     parser.add_argument('--lr_decay_step', type=int, default=20, help='learning rate scheduler deacy step (default: 20)')
-    parser.add_argument('--log_interval', type=int, default=20, help='how many batches to wait before logging training status')
+    parser.add_argument('--log_interval', type=int, default=20, help='how many batches to wait before logging training status (default: 20)')
     parser.add_argument('--name', default='resnet18_arc', help='model save at {SM_MODEL_DIR}/{name}')
+    parser.add_argument('--arc_scale', type=float, default=30.0, help='arcface scale (default: 30.0)')
+    parser.add_argument('--arc_margin', type=float, default=0.4, help='arcface margin (default: 0.4)')
 
     # Dataset
-    parser.add_argument('--n_splits', type=int, default=5, help='number for K-Fold validation')
-    parser.add_argument('--k_index', type=int, default=4, help='number of K-Fold validation')
+    parser.add_argument('--n_splits', type=int, default=5, help='number for K-Fold validation (default: 5)')
+    parser.add_argument('--k_index', type=int, default=4, help='number of K-Fold validation (default: 4)')
 
     # Container environment
     parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/crop_images'))
     parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_MODEL_DIR', './model'))
     parser.add_argument('--info_path', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/train.csv'))
 
-    parser.add_argument('--s', type=float, default=30.0, help='aug drop size')
-    parser.add_argument('--m', type=float, default=0.4, help='aug drop size')
 
     args = parser.parse_args()
     print(args)

@@ -95,7 +95,7 @@ if __name__ == '__main__':
     parser.add_argument('--augmentation', type=str, default='Augmentation_384', help='data augmentation type (default: Augmentation_384)')    
     # Container environment
     parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_EVAL', '/opt/ml/input/data/eval'))
-    parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_CHANNEL_MODEL', './model/best'))  # modified by ihyun
+    parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_CHANNEL_MODEL', './model/best'))
     parser.add_argument('--output_dir', type=str, default=os.environ.get('SM_OUTPUT_DATA_DIR', '/opt/ml/output'))
 
     args = parser.parse_args()
