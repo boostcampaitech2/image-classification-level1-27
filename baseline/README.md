@@ -14,7 +14,7 @@
 
 ## Table of Contents
 1. [Quick Start](#quick-start)
-2. [Advanced Examples](#advanced-Examples)
+2. [Advanced Examples](#advanced-examples)
 3. [Code Structure](#code-structure)
 4. [Detail](#detail)
 5. [Contributor](#contributor)
