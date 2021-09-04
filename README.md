@@ -133,7 +133,7 @@ python inference.py --batch_size 32 ...
 - 김인재([github](https://github.com/K-nowing)) : 팀 리더, Baseline 구성 및 성능 향상 
 - 송민재([github](https://github.com/Jjackson-dev)): 각 모델과 Augmentation 실험 등 성능향상 
 - 윤하정([github](https://github.com/YHaJung)): 협업 규칙정의, 모델실험
-- 송이현([blog](https://hello-sarah.tistory.com/)): 데이터 수집, 각종 성능 실험
+- 송이현([github](https://github.com/Ihyun)): 데이터 수집, 각종 성능 실험
 - 박상류([github](https://github.com/psrpsj)): 모델 구조, Hyperparameter 실험
 - 채유리([github](https://github.com/yoorichae)): 모델, Augmentation 실험
 
