@@ -40,9 +40,10 @@ python inference.py
 ```
 ├── baseline                       # our code
 │   ├── train.py                # to train your data
-│   ├── inferenc.py             # to inference 
+│   ├── inference.py            # to inference 
 │   ├── model.py
 │   ├── loss.py
+│   ├── dataset.py
 │   ├── transform.py
 │   ├── utils.py
 │   └── create_crop_images.py   # to create crop image
